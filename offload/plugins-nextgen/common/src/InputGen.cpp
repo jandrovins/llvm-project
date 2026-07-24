@@ -9,19 +9,17 @@
 #include "InputGenInterface.hpp"
 #include "PluginInterface.h"
 
-#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
-#include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/Compiler.h"
-#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
+
+#define DEBUG_TYPE "inputgen"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
-#include <mutex>
-#include <set>
 #include <vector>
 
 static bool getBoolEnvar(const char *Name, bool Default) {
@@ -42,189 +40,9 @@ using namespace error;
 
 namespace {
 
-constexpr const char *InputGenDumpSymtabDirEnv =
-    "LIBOMPTARGET_INPUTGEN_SAVE_SYMTAB_DIR";
-
 bool isInputGenEnabled() {
   static const bool Enabled = getBoolEnvar(INPUTGEN_ENABLE_ENVVAR, false);
   return Enabled;
-}
-
-std::string getStringEnvar(const char *Name) {
-  const char *Value = std::getenv(Name);
-  if (!Value || !Value[0])
-    return std::string();
-  return std::string(Value);
-}
-
-std::string sanitizePathComponent(StringRef Name) {
-  if (Name.empty())
-    return "unknown";
-
-  std::string Out;
-  Out.reserve(Name.size());
-  for (unsigned char C : Name) {
-    if (std::isalnum(C) || C == '_' || C == '-' || C == '.')
-      Out.push_back(char(C));
-    else
-      Out.push_back('_');
-  }
-  return Out;
-}
-
-std::string getKernelDumpStem(const GenericKernelTy &Kernel,
-                              const DeviceImageTy &Image) {
-  StringRef KernelName = Kernel.getName() ? Kernel.getName() : "unknown";
-  return sanitizePathComponent(KernelName) + "-" +
-         utohexstr(reinterpret_cast<uintptr_t>(Image.getStart()));
-}
-
-bool markImageOnce(const DeviceImageTy &Image, std::set<const void *> &Seen,
-                   std::mutex &SeenMutex) {
-  std::lock_guard<std::mutex> Lock(SeenMutex);
-  return Seen.insert(Image.getStart()).second;
-}
-
-const char *symbolTypeName(object::SymbolRef::Type Type) {
-  switch (Type) {
-  case object::SymbolRef::ST_Function:
-    return "FUNC";
-  case object::SymbolRef::ST_Data:
-    return "DATA";
-  case object::SymbolRef::ST_Debug:
-    return "DEBUG";
-  case object::SymbolRef::ST_File:
-    return "FILE";
-  case object::SymbolRef::ST_Other:
-    return "OTHER";
-  case object::SymbolRef::ST_Unknown:
-    return "UNKNOWN";
-  }
-  return "UNKNOWN";
-}
-
-void printSymbolFlags(raw_ostream &OS, uint32_t Flags) {
-  bool Printed = false;
-  auto PrintFlag = [&](uint32_t Flag, const char *Name) {
-    if (!(Flags & Flag))
-      return;
-    if (Printed)
-      OS << '|';
-    OS << Name;
-    Printed = true;
-  };
-
-  PrintFlag(object::SymbolRef::SF_Undefined, "UND");
-  PrintFlag(object::SymbolRef::SF_Global, "GLOBAL");
-  PrintFlag(object::SymbolRef::SF_Weak, "WEAK");
-  PrintFlag(object::SymbolRef::SF_Common, "COMMON");
-  PrintFlag(object::SymbolRef::SF_Absolute, "ABS");
-  PrintFlag(object::SymbolRef::SF_Executable, "EXEC");
-  PrintFlag(object::SymbolRef::SF_FormatSpecific, "FMT");
-
-  if (!Printed)
-    OS << '0';
-}
-
-Error dumpImageSymbolTable(raw_ostream &OS, GenericDeviceTy &Device,
-                           const GenericKernelTy &Kernel, DeviceImageTy &Image) {
-  auto ObjOrErr = Device.Plugin.getGlobalHandler().getELFObjectFile(Image);
-  if (!ObjOrErr)
-    return ObjOrErr.takeError();
-
-  OS << "inputgen GPU runtime: device image symbols";
-  if (Kernel.getName())
-    OS << " for kernel " << Kernel.getName();
-  OS << " (image_start=0x"
-     << utohexstr(reinterpret_cast<uintptr_t>(Image.getStart()))
-     << ", image_size=" << Image.getSize() << ")\n";
-
-  for (const object::SymbolRef &Sym : (*ObjOrErr)->symbols()) {
-    auto NameOrErr = Sym.getName();
-    if (!NameOrErr)
-      return Plugin::error(ErrorCode::INVALID_BINARY, NameOrErr.takeError(),
-                           "failed to read symbol name");
-
-    auto AddressOrErr = Sym.getAddress();
-    if (!AddressOrErr)
-      return Plugin::error(ErrorCode::INVALID_BINARY, AddressOrErr.takeError(),
-                           "failed to read symbol address");
-
-    auto TypeOrErr = Sym.getType();
-    if (!TypeOrErr)
-      return Plugin::error(ErrorCode::INVALID_BINARY, TypeOrErr.takeError(),
-                           "failed to read symbol type");
-
-    auto FlagsOrErr = Sym.getFlags();
-    if (!FlagsOrErr)
-      return Plugin::error(ErrorCode::INVALID_BINARY, FlagsOrErr.takeError(),
-                           "failed to read symbol flags");
-
-    OS << "  0x" << utohexstr(*AddressOrErr) << ' '
-       << symbolTypeName(*TypeOrErr) << ' ';
-    printSymbolFlags(OS, *FlagsOrErr);
-    OS << ' ' << *NameOrErr << '\n';
-  }
-
-  OS.flush();
-  return Plugin::success();
-}
-
-Error dumpImageSymbolTableToFile(GenericDeviceTy &Device,
-                                 const GenericKernelTy &Kernel,
-                                 DeviceImageTy &Image, StringRef Directory) {
-  if (Directory.empty())
-    return Plugin::success();
-
-  if (std::error_code EC = sys::fs::create_directories(Directory))
-    return Plugin::error(ErrorCode::HOST_IO,
-                         "failed to create symbol table dump directory '%s': %s",
-                         Directory.str().c_str(), EC.message().c_str());
-
-  std::string Path =
-      (Directory + "/" + getKernelDumpStem(Kernel, Image) + ".symtab.txt").str();
-  std::error_code EC;
-  raw_fd_ostream OS(Path, EC, sys::fs::OF_None);
-  if (EC)
-    return Plugin::error(ErrorCode::HOST_IO,
-                         "failed to open symbol table dump '%s': %s",
-                         Path.c_str(), EC.message().c_str());
-
-  if (auto Err = dumpImageSymbolTable(OS, Device, Kernel, Image))
-    return Err;
-
-  errs() << "inputgen GPU runtime: wrote device symbol table to '" << Path
-         << "'\n";
-  return Plugin::success();
-}
-
-void emitRequestedImageDebugArtifacts(GenericDeviceTy &Device,
-                                      const GenericKernelTy &Kernel) {
-  DeviceImageTy &Image = Kernel.getImage();
-  static std::mutex DumpedFilesMutex;
-  static std::set<const void *> DumpedFiles;
-  if (!markImageOnce(Image, DumpedFiles, DumpedFilesMutex))
-    return;
-
-  if (auto Err = dumpImageSymbolTableToFile(
-          Device, Kernel, Image, getStringEnvar(InputGenDumpSymtabDirEnv)))
-    errs() << "inputgen GPU runtime: warning: failed to dump device symbol "
-              "table: "
-           << toString(std::move(Err)) << "\n";
-}
-
-void emitImageSymbolTableToErr(GenericDeviceTy &Device,
-                               const GenericKernelTy &Kernel) {
-  DeviceImageTy &Image = Kernel.getImage();
-  static std::mutex PrintedTablesMutex;
-  static std::set<const void *> PrintedTables;
-  if (!markImageOnce(Image, PrintedTables, PrintedTablesMutex))
-    return;
-
-  if (auto Err = dumpImageSymbolTable(errs(), Device, Kernel, Image))
-    errs() << "inputgen GPU runtime: warning: failed to dump device image "
-              "symbol table: "
-           << toString(std::move(Err)) << "\n";
 }
 
 void warnMissingDeviceGlobal(GenericDeviceTy &Device,
@@ -237,8 +55,6 @@ void warnMissingDeviceGlobal(GenericDeviceTy &Device,
   if (Err)
     errs() << " (" << toString(std::move(Err)) << ")";
   errs() << "; InputGen is disabled for this launch\n";
-  emitImageSymbolTableToErr(Device, Kernel);
-  emitRequestedImageDebugArtifacts(Device, Kernel);
 }
 
 Expected<GlobalTy> getDeviceGlobal(GenericDeviceTy &Device, DeviceImageTy &Image,
@@ -278,12 +94,9 @@ namespace inputgen {
 
 Error beforeKernelLaunch(GenericDeviceTy &Device,
                          const GenericKernelTy &Kernel) {
-  errs() << "beforeKernelLaunch: before isInputGenEnabled()\n";
+  LLVM_DEBUG(dbgs() << "beforeKernelLaunch: inputgen enabled...? " << isInputGenEnabled());
   if (!isInputGenEnabled())
     return Plugin::success();
-  errs() << "beforeKernelLaunch: after isInputGenEnabled()\n";
-
-  emitRequestedImageDebugArtifacts(Device, Kernel);
 
   DeviceImageTy &Image = Kernel.getImage();
   auto OffsetOrErr = getDeviceGlobal(Device, Image,
@@ -325,10 +138,9 @@ Error beforeKernelLaunch(GenericDeviceTy &Device,
 Error afterKernelLaunch(GenericDeviceTy &Device, const GenericKernelTy &Kernel,
                         AsyncInfoWrapperTy &AsyncInfoWrapper,
                         bool AlreadySynchronized) {
-  errs() << "afterKernelLaunch: before isInputGenEnabled()\n";
+  LLVM_DEBUG(dbgs() << "afterKernelLaunch: inputgen enabled...? " << isInputGenEnabled());
   if (!isInputGenEnabled())
     return Plugin::success();
-  errs() << "afterKernelLaunch: after isInputGenEnabled()\n";
 
   if (!AlreadySynchronized)
     if (auto Err = AsyncInfoWrapper.synchronize())
