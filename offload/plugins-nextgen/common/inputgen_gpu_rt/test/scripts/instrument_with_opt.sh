@@ -28,20 +28,21 @@ if [ "$#" -ne 1 ]; then
   exit 2
 fi
 
-INPUT=$1
-
-cp $INPUT $INPUT.original.backup
-llvm-dis $INPUT.original.backup
-
-if [[ "$INPUT" != *.bc ]]; then
-  echo "error: input must end with .bc: $INPUT" >&2
+if [[ "$1" != *.bc ]]; then
+  echo "error: input must end with .bc: $1" >&2
   exit 2
 fi
 
-if [ ! -f "$INPUT" ]; then
-  echo "error: input bitcode '$INPUT' does not exist" >&2
+if [ ! -f "$1" ]; then
+  echo "error: input bitcode '$1' does not exist" >&2
   exit 2
 fi
+
+INPUT_DIR=$(cd "$(dirname "$1")" && pwd)
+INPUT="$INPUT_DIR/$(basename "$1")"
+
+cp "$INPUT" "$INPUT.original.backup"
+"$LLVM_DIS" "$INPUT.original.backup"
 
 OUTPUT_PREFIX=${INPUT%.bc}
 OUTPUT_BC=$INPUT
@@ -142,11 +143,13 @@ else
   exit 2
 fi
 
+pushd "$RUNTIME_DIR" >/dev/null
 run "$OPT" \
   -passes=instrumentor \
   "$INSTRUMENTOR_CONFIG_FLAG" \
   "$INPUT" \
   -o "$TMP_OPT_BC"
+popd >/dev/null
 
 run "$LLVM_DIS" "$TMP_OPT_BC" -o "$TMP_LL"
 print_bitcode_debug_report "$TMP_LL"
