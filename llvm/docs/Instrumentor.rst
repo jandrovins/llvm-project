@@ -324,6 +324,7 @@ Configuration Sections
   - ``gpu_enabled``: Enable instrumentation for GPU targets (default: true)
   - ``runtime_bitcode``: Links the provided runtime library in during instrumentation (default: empty)
   - ``inline_runtime``: Inline runtime calls if a runime is provided via ``inline_runtime`` (default: true)
+  - ``runtime_export_symbols``: Array of runtime symbols that remain externally visible after runtime linking (default: empty)
 
 **function_pre / function_post**
   Function-level instrumentation configuration.
