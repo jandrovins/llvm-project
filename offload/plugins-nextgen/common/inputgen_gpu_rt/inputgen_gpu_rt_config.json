@@ -2,6 +2,8 @@
   "configuration": {
     "runtime_prefix": "__instrumentor_",
     "runtime_prefix.description": "The runtime API prefix.",
+    "runtime_bitcode": "../build/inputgen_gpu_rt.bc",
+    "inline_runtime": false,
     "target_regex": "",
     "target_regex.description": "Regular expression to be matched against the module target. Only targets that match this regex will be instrumented.",
     "function_regex": "",

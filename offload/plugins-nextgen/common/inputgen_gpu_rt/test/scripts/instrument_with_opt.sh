@@ -7,10 +7,7 @@ RUNTIME_DIR=$(cd "$SCRIPT_DIR/../.." && pwd)
 OPT=${OPT:-opt}
 MAKE=${MAKE:-make}
 CONFIG=${CONFIG:-"$RUNTIME_DIR/inputgen_gpu_rt_config.json"}
-DEFAULT_RUNTIME_DEVICE_BC="$RUNTIME_DIR/build/inputgen_gpu_rt_device.bc"
-DEFAULT_RUNTIME_BUFFER_BC="$RUNTIME_DIR/build/inputgen_gpu_rt_buffer.bc"
-RUNTIME_DEVICE_BC=${RUNTIME_DEVICE_BC:-"$DEFAULT_RUNTIME_DEVICE_BC"}
-RUNTIME_BUFFER_BC=${RUNTIME_BUFFER_BC:-"$DEFAULT_RUNTIME_BUFFER_BC"}
+RUNTIME_BC=${RUNTIME_BC:-"$RUNTIME_DIR/build/inputgen_gpu_rt.bc"}
 
 OPT_PATH=$(command -v "$OPT" 2>/dev/null || true)
 if [ -n "$OPT_PATH" ]; then
@@ -25,15 +22,9 @@ else
   LLVM_DIS=${LLVM_DIS:-llvm-dis}
 fi
 
-if [ -z "${LLVM_LINK:-}" ] && [ -n "$OPT_BINDIR" ] && [ -x "$OPT_BINDIR/llvm-link" ]; then
-  LLVM_LINK="$OPT_BINDIR/llvm-link"
-else
-  LLVM_LINK=${LLVM_LINK:-llvm-link}
-fi
-
 if [ "$#" -ne 1 ]; then
   echo "usage: $0 input.bc" >&2
-  echo "       CONFIG=path/to/config.json OPT=path/to/opt LLVM_LINK=path/to/llvm-link LLVM_DIS=path/to/llvm-dis $0 input.bc" >&2
+  echo "       CONFIG=path/to/config.json OPT=path/to/opt LLVM_DIS=path/to/llvm-dis $0 input.bc" >&2
   exit 2
 fi
 
@@ -56,11 +47,10 @@ OUTPUT_PREFIX=${INPUT%.bc}
 OUTPUT_BC=$INPUT
 OUTPUT_LL=${OUTPUT_PREFIX}.ll
 TMP_OPT_BC=${OUTPUT_BC}.opt.tmp
-TMP_BC=${OUTPUT_BC}.tmp
 TMP_LL=${OUTPUT_LL}.tmp
 
 cleanup() {
-  rm -f "$TMP_OPT_BC" "$TMP_BC" "$TMP_LL"
+  rm -f "$TMP_OPT_BC" "$TMP_LL"
 }
 
 trap cleanup EXIT
@@ -129,6 +119,18 @@ print_bitcode_debug_report() {
   fi
 }
 
+MAKE_ARGS=(-C "$RUNTIME_DIR" device-bc)
+if [ -n "${GPU_ARCH:-}" ]; then
+  MAKE_ARGS+=("GPU_ARCH=$GPU_ARCH")
+fi
+run "$MAKE" "${MAKE_ARGS[@]}"
+
+if [ ! -f "$RUNTIME_BC" ]; then
+  echo "error: runtime bitcode '$RUNTIME_BC' does not exist" >&2
+  echo "hint: run 'make -C $RUNTIME_DIR device-bc${GPU_ARCH:+ GPU_ARCH=$GPU_ARCH}'" >&2
+  exit 2
+fi
+
 OPT_HELP=$("$OPT" --help 2>&1 || true)
 if printf '%s\n' "$OPT_HELP" | grep -q -- "-instrumentor-read-config-files"; then
   INSTRUMENTOR_CONFIG_FLAG="-instrumentor-read-config-files=$CONFIG"
@@ -146,35 +148,8 @@ run "$OPT" \
   "$INPUT" \
   -o "$TMP_OPT_BC"
 
-if [ "$RUNTIME_DEVICE_BC" = "$DEFAULT_RUNTIME_DEVICE_BC" ] && \
-   [ "$RUNTIME_BUFFER_BC" = "$DEFAULT_RUNTIME_BUFFER_BC" ]; then
-  MAKE_ARGS=(-C "$RUNTIME_DIR" device-bc)
-  if [ -n "${GPU_ARCH:-}" ]; then
-    MAKE_ARGS+=("GPU_ARCH=$GPU_ARCH")
-  fi
-  run "$MAKE" "${MAKE_ARGS[@]}"
-fi
-
-if [ ! -f "$RUNTIME_DEVICE_BC" ]; then
-  echo "error: runtime device bitcode '$RUNTIME_DEVICE_BC' does not exist" >&2
-  echo "hint: run 'make -C $RUNTIME_DIR device-bc${GPU_ARCH:+ GPU_ARCH=$GPU_ARCH}'" >&2
-  exit 2
-fi
-
-if [ ! -f "$RUNTIME_BUFFER_BC" ]; then
-  echo "error: runtime buffer bitcode '$RUNTIME_BUFFER_BC' does not exist" >&2
-  echo "hint: run 'make -C $RUNTIME_DIR device-bc${GPU_ARCH:+ GPU_ARCH=$GPU_ARCH}'" >&2
-  exit 2
-fi
-
-run "$LLVM_LINK" \
-  "$TMP_OPT_BC" \
-  "$RUNTIME_DEVICE_BC" \
-  "$RUNTIME_BUFFER_BC" \
-  -o "$TMP_BC"
-
-run "$LLVM_DIS" "$TMP_BC" -o "$TMP_LL"
+run "$LLVM_DIS" "$TMP_OPT_BC" -o "$TMP_LL"
 print_bitcode_debug_report "$TMP_LL"
 
-run mv "$TMP_BC" "$OUTPUT_BC"
+run mv "$TMP_OPT_BC" "$OUTPUT_BC"
 run mv "$TMP_LL" "$OUTPUT_LL"
