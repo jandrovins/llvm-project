@@ -74,10 +74,10 @@ static cl::opt<bool>
                    cl::init(false), cl::cat(ReplayOptions));
 
 static cl::opt<bool>
-  SaveJITImageOpt("save-jit-image",
-          cl::desc("Save the JIT-compiled image next to the bitcode "
-               "image file."),
-          cl::init(false), cl::cat(ReplayOptions));
+    SaveJITImageOpt("save-jit-image",
+                    cl::desc("Save the JIT-compiled image next to the bitcode "
+                             "image file."),
+                    cl::init(false), cl::cat(ReplayOptions));
 
 template <typename... ArgsTy>
 Error createErr(const char *ErrFmt, ArgsTy &&...Args) {
