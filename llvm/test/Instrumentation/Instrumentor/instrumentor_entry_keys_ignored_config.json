@@ -1,0 +1,8 @@
+{
+  "configuration": {
+    "host_enabled": false,
+    "gpu_enabled": true,
+    "entry_function": "vvv_foo",
+    "entry_point_name": "__instrumentor_entry"
+  }
+}

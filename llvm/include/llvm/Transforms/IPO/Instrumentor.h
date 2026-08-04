@@ -399,13 +399,20 @@ struct LLVM_ABI InstrumentationConfig {
     InlineRuntimeEagerly = BaseConfigurationOption::createBoolOption(
         *this, "inline_runtime", "Inline runtime function calls eagerly", true);
     RuntimeExportSymbols = BaseConfigurationOption::createStringListOption(
-      *this, "runtime_export_symbols",
-      "Runtime symbols that remain externally visible after linking.", {});
+        *this, "runtime_export_symbols",
+        "Runtime symbols that remain externally visible after linking.", {});
     populate(IIRB);
   }
 
   /// Populate the instrumentation opportunities.
   virtual void populate(InstrumentorIRBuilderTy &IIRB);
+
+  /// Allow embedded users to extend the module after instrumentation and before
+  /// runtime bitcode linking.
+  virtual bool instrumentBeforeRuntimeLink(Module &,
+                                           InstrumentorIRBuilderTy &) {
+    return false;
+  }
 
   /// Get the runtime prefix for the instrumentation runtime functions.
   StringRef getRTName() const { return RuntimePrefix->getString(); }
