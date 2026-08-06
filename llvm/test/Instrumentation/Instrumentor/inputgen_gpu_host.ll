@@ -5,7 +5,7 @@ target triple = "x86_64-unknown-linux-gnu"
 
 ; CHECK: inputgen entry kernels are not supported for target 'x86_64-unknown-linux-gnu'
 ; CHECK-NOT: __instrumentor_post_load
-; CHECK-NOT: __instrumentor_entry
+; CHECK-NOT: __ig_entry
 ; CHECK-LABEL: define i32 @vvv_foo(
 ; CHECK: load i32, ptr %a, align 4
 

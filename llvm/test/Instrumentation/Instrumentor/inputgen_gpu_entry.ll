@@ -20,7 +20,7 @@ entry:
   ret i32 %v
 }
 
-; CHECK-LABEL: define amdgpu_kernel void @__instrumentor_entry(
+; CHECK-LABEL: define amdgpu_kernel void @__ig_entry_vvv_foo(
 ; CHECK-SAME: i32 [[MODE:%.*]], ptr [[BUFFER:%.*]], i64 [[SIZE:%.*]], ptr [[RESULT:%.*]]) {
 ; CHECK: store ptr [[BUFFER]], ptr addrspace(1) @inputgen_buffer, align 8
 ; CHECK: store i64 [[SIZE]], ptr addrspace(1) @inputgen_buffer_size, align 8

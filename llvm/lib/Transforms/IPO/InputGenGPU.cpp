@@ -37,11 +37,6 @@ static cl::opt<std::string> InputGenGPUEntryFunction(
     cl::desc("Device function wrapped by the InputGen GPU entry kernel"),
     cl::init(""));
 
-static cl::opt<std::string> InputGenGPUEntryPointName(
-    "inputgen-gpu-entry-point-name",
-    cl::desc("Name of the generated InputGen GPU entry kernel"),
-    cl::init("__instrumentor_entry"));
-
 static cl::opt<std::string> InputGenGPURuntimeBitcode(
     "inputgen-gpu-runtime-bitcode",
     cl::desc("InputGen GPU runtime bitcode linked by the inputgen-gpu pass"),
@@ -49,9 +44,12 @@ static cl::opt<std::string> InputGenGPURuntimeBitcode(
 
 namespace {
 
+std::string getInputGenGPUEntryPointName(StringRef EntryFunctionName) {
+  return (Twine("__ig_entry_") + EntryFunctionName).str();
+}
+
 bool createInputGenGPUEntryKernel(Module &M, InstrumentorIRBuilderTy &IIRB,
-                                  StringRef EntryFunctionName,
-                                  StringRef EntryPointName) {
+                                  StringRef EntryFunctionName) {
   if (EntryFunctionName.empty())
     return false;
 
@@ -78,11 +76,7 @@ bool createInputGenGPUEntryKernel(Module &M, InstrumentorIRBuilderTy &IIRB,
     return false;
   }
 
-  if (EntryPointName.empty()) {
-    IIRB.Ctx.diagnose(DiagnosticInfoInstrumentation(
-        "inputgen entry point name is empty", DS_Warning));
-    return false;
-  }
+  std::string EntryPointName = getInputGenGPUEntryPointName(EntryFunctionName);
 
   if (M.getNamedValue(EntryPointName)) {
     IIRB.Ctx.diagnose(DiagnosticInfoInstrumentation(
@@ -203,8 +197,7 @@ class InputGenGPUConfig final : public InstrumentationConfig {
 
   bool instrumentBeforeRuntimeLink(Module &M,
                                    InstrumentorIRBuilderTy &IIRB) override {
-    return createInputGenGPUEntryKernel(M, IIRB, InputGenGPUEntryFunction,
-                                        InputGenGPUEntryPointName);
+    return createInputGenGPUEntryKernel(M, IIRB, InputGenGPUEntryFunction);
   }
 };
 
