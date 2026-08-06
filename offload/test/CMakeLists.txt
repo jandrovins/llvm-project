@@ -44,7 +44,8 @@ foreach(CURRENT_TARGET IN LISTS SYSTEM_TARGETS)
 endforeach()
 
 # The tools that are needed or used by tests.
-set(OFFLOAD_TOOLS llvm-offload-device-info llvm-omp-kernel-replay)
+set(OFFLOAD_TOOLS llvm-offload-device-info llvm-omp-kernel-replay
+                  llvm-inputgen-gpu)
 
 add_offload_testsuite(check-libomptarget
   "Running libomptarget tests"
