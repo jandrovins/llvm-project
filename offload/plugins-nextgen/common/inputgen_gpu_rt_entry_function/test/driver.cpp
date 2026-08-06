@@ -17,7 +17,7 @@
 #define OMP_KERNEL_ARG_VERSION 5
 
 static const char *InputFile = "input.txt";
-static const char *EntryName = "__instrumentor_entry";
+static const char *EntryName = "__ig_entry_vvv_foo";
 
 static std::vector<char> readFile(const std::string &Path) {
   std::ifstream File(Path, std::ios::binary | std::ios::ate);

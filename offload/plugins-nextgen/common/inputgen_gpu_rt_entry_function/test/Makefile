@@ -65,7 +65,7 @@ $(RUNTIME_BC):
 	$(MAKE) -C $(RUNTIME_DIR) device-bc GPU_ARCH=$(GPU_ARCH) CC=$(CC) LLVM_LINK=$(LLVM_LINK)
 
 $(LINKED_BC): $(DEVICE_BC) $(RUNTIME_BC)
-	$(OPT) -passes=inputgen-gpu -inputgen-gpu-runtime-bitcode=$(RUNTIME_BC) -inputgen-gpu-entry-function=vvv_foo -inputgen-gpu-entry-point-name=__instrumentor_entry $< -o $@
+	$(OPT) -passes=inputgen-gpu -inputgen-gpu-runtime-bitcode=$(RUNTIME_BC) -inputgen-gpu-entry-function=vvv_foo $< -o $@
 
 $(DEVICE_LL): $(LINKED_BC)
 	$(LLVM_DIS) $< -o $@
