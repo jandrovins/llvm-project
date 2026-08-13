@@ -14,6 +14,8 @@ set(OFFLOAD_DEVICE_INFO_EXECUTABLE ${LLVM_RUNTIME_OUTPUT_INTDIR}/llvm-offload-de
 set(OFFLOAD_TBLGEN_EXECUTABLE ${LLVM_RUNTIME_OUTPUT_INTDIR}/offload-tblgen)
 set(OMP_KERNEL_REPLAY ${LLVM_RUNTIME_OUTPUT_INTDIR}/llvm-omp-kernel-replay)
 set(INPUTGEN_GPU_EXECUTABLE ${LLVM_RUNTIME_OUTPUT_INTDIR}/llvm-inputgen-gpu)
+set(INPUTGEN_GPU_ENTRY_RUNTIME
+    ${CMAKE_CURRENT_BINARY_DIR}/inputgen_gpu/inputgen_gpu_entry_runtime.bc)
 
 # Set the information that we know.
 set(OPENMP_TEST_COMPILER_ID "Clang")

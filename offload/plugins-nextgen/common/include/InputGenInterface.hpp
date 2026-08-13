@@ -3,52 +3,27 @@
 
 #include <stdint.h>
 
-#define INPUTGEN_ENABLE_ENVVAR "LIBOMPTARGET_INPUTGEN"
-
-#define INPUTGEN_STRING_BUFFER_SYMBOL "__instrumentor_gpu_log_buffer"
-#define INPUTGEN_STRING_BUFFER_OFFSET_SYMBOL "__instrumentor_gpu_log_offset"
-#define INPUTGEN_STRING_BUFFER_RECORDS_SYMBOL "__instrumentor_gpu_log_records"
-#define INPUTGEN_STRING_BUFFER_DROPPED_SYMBOL "__instrumentor_gpu_log_dropped"
-
-#ifndef INPUTGEN_STRING_BUFFER_DEFAULT_SIZE
-#define INPUTGEN_STRING_BUFFER_DEFAULT_SIZE (1u << 20)
-#endif
-
-typedef struct {
-  uint64_t Offset;
-  uint64_t Records;
-  uint64_t Dropped;
-} InputGenStringBufferCountersTy;
+enum {
+#define INPUTGEN_GPU_ABI_MODE(Name, Value) Name = Value,
+#include "llvm/Frontend/Offloading/InputGenGPUABI.def"
+};
 
 #ifdef __cplusplus
-
-#include "llvm/Support/Error.h"
-
 namespace llvm {
 namespace omp {
 namespace target {
 namespace plugin {
-
-struct AsyncInfoWrapperTy;
-struct GenericDeviceTy;
-struct GenericKernelTy;
-
 namespace inputgen {
 
-llvm::Error beforeKernelLaunch(GenericDeviceTy &Device,
-                               const GenericKernelTy &Kernel);
-llvm::Error afterKernelLaunch(GenericDeviceTy &Device,
-                              const GenericKernelTy &Kernel,
-                              AsyncInfoWrapperTy &AsyncInfoWrapper,
-                              bool AlreadySynchronized);
+#define INPUTGEN_GPU_ENTRY_STATE(Variable, Constant, CType, Symbol)          \
+  inline constexpr char Constant[] = Symbol;
+#include "llvm/Frontend/Offloading/InputGenGPUABI.def"
 
 } // namespace inputgen
-
 } // namespace plugin
 } // namespace target
 } // namespace omp
 } // namespace llvm
-
 #endif
 
 #endif

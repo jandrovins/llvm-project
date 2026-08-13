@@ -27,6 +27,17 @@ if(TARGET omp)
   set(OMP_DEPEND omp)
 endif()
 
+if(LIBOMPTARGET_AMDGPU_DETECTED_ARCH_LIST)
+  list(GET LIBOMPTARGET_AMDGPU_DETECTED_ARCH_LIST 0 INPUTGEN_GPU_RUNTIME_ARCH)
+else()
+  set(INPUTGEN_GPU_RUNTIME_ARCH native)
+endif()
+
+set(INPUTGEN_GPU_RT_DEPEND)
+if(TARGET inputgen-gpu-runtime-bc)
+  set(INPUTGEN_GPU_RT_DEPEND inputgen-gpu-runtime-bc)
+endif()
+
 string(REGEX MATCHALL "([^\ ]+\ |[^\ ]+$)" SYSTEM_TARGETS "${LIBOMPTARGET_SYSTEM_TARGETS}")
 foreach(CURRENT_TARGET IN LISTS SYSTEM_TARGETS)
   string(STRIP "${CURRENT_TARGET}" CURRENT_TARGET)
@@ -35,6 +46,7 @@ foreach(CURRENT_TARGET IN LISTS SYSTEM_TARGETS)
     "Running libomptarget tests"
     ${CMAKE_CURRENT_BINARY_DIR}/${CURRENT_TARGET}
     DEPENDS omptarget ${OMP_DEPEND} ${LIBOMPTARGET_TESTED_PLUGINS}
+            ${INPUTGEN_GPU_RT_DEPEND}
     ARGS ${LIBOMPTARGET_LIT_ARG_LIST})
   list(APPEND LIBOMPTARGET_LIT_TESTSUITES ${CMAKE_CURRENT_BINARY_DIR}/${CURRENT_TARGET})
 
@@ -46,6 +58,7 @@ endforeach()
 # The tools that are needed or used by tests.
 set(OFFLOAD_TOOLS llvm-offload-device-info llvm-omp-kernel-replay
                   llvm-inputgen-gpu)
+list(APPEND OFFLOAD_TOOLS ${INPUTGEN_GPU_RT_DEPEND})
 
 add_offload_testsuite(check-libomptarget
   "Running libomptarget tests"

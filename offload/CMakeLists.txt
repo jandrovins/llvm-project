@@ -333,6 +333,7 @@ add_subdirectory(tools/offload-tblgen)
 # Build offloading plugins and device RTLs if they are available.
 add_subdirectory(plugins-nextgen)
 add_subdirectory(tools)
+add_subdirectory(inputgen_gpu)
 add_subdirectory(docs)
 
 if(BUILD_LIBOMPTARGET)

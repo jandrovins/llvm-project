@@ -10,8 +10,6 @@
 
 #include "PluginInterface.h"
 
-#include "InputGenInterface.hpp"
-
 #include "Shared/APITypes.h"
 #include "Shared/Debug.h"
 #include "Shared/Environment.h"
@@ -325,9 +323,6 @@ Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice, void **ArgPtrs,
       return Err;
   }
 
-  if (auto Err = inputgen::beforeKernelLaunch(GenericDevice, *this))
-    return Err;
-
   if (RecordReplay) {
     // Record the kernel prologue data before kernel launch.
     auto RRHandleOrErr = RecordReplay->recordPrologue(
@@ -343,20 +338,17 @@ Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice, void **ArgPtrs,
                             KernelArgs, LaunchParams, AsyncInfoWrapper))
     return Err;
 
-  bool AlreadySynchronized = false;
   if (RecordReplay) {
     // Record replay requires synchronization.
     if (auto Err = AsyncInfoWrapper.synchronize())
       return Err;
-    AlreadySynchronized = true;
 
     // Record the epilogue data after kernel synchronization.
     if (auto Err = RecordReplay->recordEpilogue(*this, RRHandle))
       return Err;
   }
 
-  return inputgen::afterKernelLaunch(GenericDevice, *this, AsyncInfoWrapper,
-                                     AlreadySynchronized);
+  return Plugin::success();
 }
 
 KernelLaunchParamsTy

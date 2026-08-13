@@ -14,6 +14,8 @@
 
 #include "omptarget.h"
 
+#include "InputGenInterface.hpp"
+
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Frontend/Offloading/Utility.h"
@@ -43,8 +45,8 @@ using namespace llvm;
 namespace {
 
 enum class InputGenMode : int32_t {
-  Generate = 1,
-  Replay = 2,
+  Generate = INPUTGEN_MODE_GENERATE,
+  Replay = INPUTGEN_MODE_REPLAY,
 };
 
 struct InputGenInvocation {

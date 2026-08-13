@@ -1,4 +1,4 @@
-//===-- Instrumentor Runtime Helper Header -------------------------------===//
+//===-- InputGen GPU Instrumentor ABI Helpers ----------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -11,8 +11,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef INPUTGEN_GPU_RT_H
-#define INPUTGEN_GPU_RT_H
+#ifndef INPUTGEN_GPU_INSTRUMENTOR_ABI_H
+#define INPUTGEN_GPU_INSTRUMENTOR_ABI_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -314,6 +314,6 @@ typedef enum CompareFlags {
   COMPARE_FLAG_HAS_NO_SIGNED_ZEROS = 1 << 3,
 } CompareFlags;
 
-#endif // INPUTGEN_GPU_RT_H
+#endif // INPUTGEN_GPU_INSTRUMENTOR_ABI_H
 
 // Generated with runtime prefix: __instrumentor_

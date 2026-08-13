@@ -44,6 +44,10 @@ static cl::opt<std::string> InputGenGPURuntimeBitcode(
 
 namespace {
 
+#define INPUTGEN_GPU_ENTRY_STATE(Variable, Constant, CType, Symbol)          \
+  constexpr StringLiteral Constant(Symbol);
+#include "llvm/Frontend/Offloading/InputGenGPUABI.def"
+
 std::string getInputGenGPUEntryPointName(StringRef EntryFunctionName) {
   return (Twine("__ig_entry_") + EntryFunctionName).str();
 }
@@ -97,14 +101,15 @@ bool createInputGenGPUEntryKernel(Module &M, InstrumentorIRBuilderTy &IIRB,
     });
   };
 
+  // Bind the generated kernel to the direct-entry runtime state.
   GlobalVariable *BufferGV =
-      GetOrInsertGlobalInDefaultAS("inputgen_buffer", IIRB.PtrTy);
-  GlobalVariable *BufferSizeGV =
-      GetOrInsertGlobalInDefaultAS("inputgen_buffer_size", IIRB.Int64Ty);
-  GlobalVariable *BufferOffsetGV =
-      GetOrInsertGlobalInDefaultAS("inputgen_buffer_offset", IIRB.Int64Ty);
+      GetOrInsertGlobalInDefaultAS(InputGenEntryBufferSymbol, IIRB.PtrTy);
+  GlobalVariable *BufferSizeGV = GetOrInsertGlobalInDefaultAS(
+      InputGenEntryBufferSizeSymbol, IIRB.Int64Ty);
+  GlobalVariable *BufferOffsetGV = GetOrInsertGlobalInDefaultAS(
+      InputGenEntryBufferOffsetSymbol, IIRB.Int64Ty);
   GlobalVariable *ModeGV =
-      GetOrInsertGlobalInDefaultAS("inputgen_mode", IIRB.Int32Ty);
+      GetOrInsertGlobalInDefaultAS(InputGenEntryModeSymbol, IIRB.Int32Ty);
 
   FunctionType *EntryPointTy = FunctionType::get(
       IIRB.VoidTy, {IIRB.Int32Ty, IIRB.PtrTy, IIRB.Int64Ty, IIRB.PtrTy},
@@ -169,8 +174,10 @@ class InputGenGPUConfig final : public InstrumentationConfig {
     RuntimeBitcode->setString(InputGenGPURuntimeBitcode);
     InlineRuntimeEagerly->setBool(false);
 
-    StringRef RuntimeExports[] = {"inputgen_buffer", "inputgen_buffer_size",
-                                  "inputgen_buffer_offset", "inputgen_mode"};
+    StringRef RuntimeExports[] = {
+#define INPUTGEN_GPU_ENTRY_STATE(Variable, Constant, CType, Symbol) Constant,
+#include "llvm/Frontend/Offloading/InputGenGPUABI.def"
+    };
     RuntimeExportSymbols->setStringList(RuntimeExports);
 
     for (auto &ChoiceMap : IChoices) {

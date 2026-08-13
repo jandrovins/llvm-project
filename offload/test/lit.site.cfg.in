@@ -29,5 +29,10 @@ config.has_libomptarget_ompt = @LIBOMPTARGET_OMPT_SUPPORT@
 config.offload_tblgen = "@OFFLOAD_TBLGEN_EXECUTABLE@"
 config.omp_kernel_replay = "@OMP_KERNEL_REPLAY@"
 config.inputgen_gpu = "@INPUTGEN_GPU_EXECUTABLE@"
+config.inputgen_gpu_entry_runtime = "@INPUTGEN_GPU_ENTRY_RUNTIME@"
+config.inputgen_gpu_runtime_arch = "@INPUTGEN_GPU_RUNTIME_ARCH@"
+config.inputgen_gpu_source_dir = "@CMAKE_CURRENT_SOURCE_DIR@/../inputgen_gpu"
+config.inputgen_gpu_interface_include_dir = "@CMAKE_CURRENT_SOURCE_DIR@/../plugins-nextgen/common/include"
+config.inputgen_gpu_llvm_include_dir = "@CMAKE_CURRENT_SOURCE_DIR@/../../llvm/include"
 # Let the main config do the real work.
 lit_config.load_config(config, "@CMAKE_CURRENT_SOURCE_DIR@/lit.cfg")
