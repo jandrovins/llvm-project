@@ -15,4 +15,5 @@ add_subdirectory(deviceinfo)
 # kernelreplay requires libomptarget which is not available on Windows
 if(BUILD_LIBOMPTARGET)
   add_subdirectory(kernelreplay)
+  add_subdirectory(inputgen)
 endif()

@@ -28,6 +28,7 @@ config.libomptarget_debug = @LIBOMPTARGET_DEBUG@
 config.has_libomptarget_ompt = @LIBOMPTARGET_OMPT_SUPPORT@
 config.offload_tblgen = "@OFFLOAD_TBLGEN_EXECUTABLE@"
 config.omp_kernel_replay = "@OMP_KERNEL_REPLAY@"
+config.inputgen_gpu = "@INPUTGEN_GPU_EXECUTABLE@"
 config.inputgen_gpu_src = "@INPUTGEN_GPU_RT_SOURCE_DIR@"
 config.inputgen_gpu_interface_include = "@INPUTGEN_GPU_RT_INTERFACE_INCLUDE_DIR@"
 config.inputgen_gpu_llvm_include = "@INPUTGEN_GPU_RT_LLVM_INCLUDE_DIR@"

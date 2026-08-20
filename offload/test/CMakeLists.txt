@@ -76,6 +76,7 @@ if(TARGET omptarget)
       "Running libomptarget tests"
       ${CMAKE_CURRENT_BINARY_DIR}/${CURRENT_TARGET}
       DEPENDS omptarget ${OMP_DEPEND} ${LIBOMPTARGET_TESTED_PLUGINS}
+              llvm-inputgen-gpu
               ${INPUTGEN_GPU_RT_TEST_DEP}
       ARGS ${LIBOMPTARGET_LIT_ARG_LIST})
     list(APPEND LIBOMPTARGET_LIT_TESTSUITES ${CMAKE_CURRENT_BINARY_DIR}/${CURRENT_TARGET})
@@ -86,7 +87,8 @@ if(TARGET omptarget)
   endforeach()
 
   # The tools that are needed or used by tests.
-  set(OFFLOAD_TOOLS llvm-offload-device-info llvm-omp-kernel-replay)
+  set(OFFLOAD_TOOLS llvm-offload-device-info llvm-omp-kernel-replay
+                    llvm-inputgen-gpu)
 
   add_offload_testsuite(check-libomptarget
     "Running libomptarget tests"
