@@ -1,4 +1,4 @@
-// Verify generate, replay, and pass-through behavior of the post-load callback.
+// Verify lazy pointer-slot creation and replay reconstruction.
 // RUN: %clang -I%inputgen-gpu-src -I%inputgen-gpu-interface-include \
 // RUN:   -I%inputgen-gpu-llvm-include %inputgen-gpu-src/inputgen_gpu_entry_state.c \
 // RUN:   %inputgen-gpu-src/inputgen_gpu_entry_callbacks.c %s -o %t
@@ -9,29 +9,38 @@
 #include <stdint.h>
 #include <stdio.h>
 
-int64_t __ig_post_load(int64_t value, int64_t value_size, int32_t value_type_id,
-                       int32_t id);
-
 int main(void) {
-  int Buffer[2] = {0, 17};
-  InputGenEntryBuffer = Buffer;
-  InputGenEntryBufferSize = sizeof(Buffer);
-  InputGenEntryBufferOffset = 0;
+  _Alignas(8) unsigned char Factory[4096] = {};
+  InputGenGPUFactoryHeader *Header = (InputGenGPUFactoryHeader *)Factory;
+  Header->Magic = INPUTGEN_GPU_FACTORY_SLICE_MAGIC;
+  Header->Version = INPUTGEN_GPU_FACTORY_VERSION;
+  Header->Mode = INPUTGEN_MODE_GENERATE;
+  Header->NumTeams = 1;
+  Header->ThreadsPerTeam = 1;
+  Header->NumLanes = 1;
+  Header->SliceBytes = 2048;
+  Header->ObjectBytes = 64;
+  Header->FactoryBytes = sizeof(Factory);
 
-  InputGenEntryMode = INPUTGEN_MODE_GENERATE;
-  int64_t Generated = __ig_post_load(123, 4, IntegerTyID, 11);
-  printf("generate=%lld buffer0=%d\n", (long long)Generated, Buffer[0]);
+  void *Arguments = __ig_prepare_lane(Factory, 0, 0, 8, 1);
+  void *PointerSlot = __ig_pre_load(Arguments, 0, 8, 8, PointerTyID);
+  void *Pointer = *(void **)PointerSlot;
+  int *Value = (int *)__ig_pre_load(Pointer, 0, 4, 4, IntegerTyID);
 
-  Buffer[0] = 42;
-  InputGenEntryMode = INPUTGEN_MODE_REPLAY;
-  printf("replay=%lld\n", (long long)__ig_post_load(123, 4, IntegerTyID, 12));
-  printf("passthrough-size=%lld\n",
-         (long long)__ig_post_load(55, 8, IntegerTyID, 13));
-  printf("passthrough-type=%lld\n", (long long)__ig_post_load(66, 4, 15, 14));
+  InputGenGPUFactorySliceHeader *Slice =
+      (InputGenGPUFactorySliceHeader *)(Factory + ((sizeof(*Header) + 7) &
+                                                   ~((uint64_t)7)));
+  printf("generate=%d objects=%u relations=%u\n", *Value, Slice->ObjectCount,
+         Slice->RelationCount);
+
+  Header->Mode = INPUTGEN_MODE_REPLAY;
+  Arguments = __ig_prepare_lane(Factory, 0, 0, 8, 1);
+  PointerSlot = __ig_pre_load(Arguments, 0, 8, 8, PointerTyID);
+  Pointer = *(void **)PointerSlot;
+  Value = (int *)__ig_pre_load(Pointer, 0, 4, 4, IntegerTyID);
+  printf("replay=%d error=%u\n", *Value, Slice->Error);
   return 0;
 }
 
-// CHECK: generate=9 buffer0=9
-// CHECK: replay=42
-// CHECK: passthrough-size=55
-// CHECK: passthrough-type=66
+// CHECK: generate=9 objects=2 relations=1
+// CHECK: replay=9 error=0

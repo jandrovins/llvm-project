@@ -12,17 +12,21 @@
 #include <stdint.h>
 
 #include "InputGenInterface.hpp"
+#include "inputgen_gpu_factory.h"
 #include "inputgen_gpu_instrumentor_abi.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define INPUTGEN_GPU_ENTRY_STATE(Variable, Constant, CType, Symbol)            \
-  extern CType Variable __asm__(Symbol);
-#include "llvm/Frontend/Offloading/InputGenGPUABI.def"
-
-int inputgen_entry_random(void);
+void *__ig_prepare_lane(void *Context, uint64_t WorkgroupIndex,
+                        uint64_t WorkitemIndex, uint64_t ArgumentBytes,
+                        uint32_t PointerArgumentCount);
+void __ig_store_result(uint64_t Bits, uint32_t Size);
+void *__ig_pre_load(void *Pointer, int32_t PointerAS, int64_t ValueSize,
+                    int64_t Alignment, int32_t ValueTypeId);
+void *__ig_pre_store(void *Pointer, int32_t PointerAS, int64_t ValueSize,
+                     int64_t Alignment, int32_t ValueTypeId);
 
 #ifdef __cplusplus
 }

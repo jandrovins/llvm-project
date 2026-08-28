@@ -11,5 +11,6 @@ entry:
 }
 
 ; CHECK-LABEL: define amdgpu_kernel void @__ig_entry_vvv_foo(
+; CHECK: call ptr @__ig_pre_load(ptr {{%.*}}, i32 0, i64 8, i64 8, i32 15)
 ; CHECK: call void @vvv_foo(
 ; CHECK-NEXT: ret void

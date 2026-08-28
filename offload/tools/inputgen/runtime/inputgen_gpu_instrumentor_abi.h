@@ -11,8 +11,8 @@
 
 #include <stdint.h>
 
-// llvm::Type::IntegerTyID. Keep this minimal device ABI independent of LLVM
-// C++.
-enum { IntegerTyID = 12 };
+// llvm::Type::TypeID values. Keep this minimal device ABI independent of LLVM
+// C++ and only expose the scalar types supported by the first object model.
+enum { FloatTyID = 2, DoubleTyID = 3, IntegerTyID = 12, PointerTyID = 14 };
 
 #endif

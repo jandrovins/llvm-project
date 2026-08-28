@@ -47,6 +47,7 @@ if(NOT INPUTGEN_GPU_RT_LLVM_LINK)
 endif()
 
 set(inputgen_gpu_rt_common_deps
+  ${INPUTGEN_GPU_RT_SOURCE_DIR}/inputgen_gpu_factory.h
   ${INPUTGEN_GPU_RT_SOURCE_DIR}/inputgen_gpu_entry_internal.h
   ${INPUTGEN_GPU_RT_SOURCE_DIR}/inputgen_gpu_instrumentor_abi.h
   ${INPUTGEN_GPU_RT_INTERFACE_INCLUDE_DIR}/InputGenInterface.hpp

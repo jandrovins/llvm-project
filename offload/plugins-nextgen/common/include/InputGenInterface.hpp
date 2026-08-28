@@ -16,12 +16,4 @@ enum {
 #include "llvm/Frontend/Offloading/InputGenGPUABI.def"
 };
 
-#ifdef __cplusplus
-namespace llvm::omp::target::plugin::inputgen {
-#define INPUTGEN_GPU_ENTRY_STATE(Variable, Constant, CType, Symbol)            \
-  inline constexpr char Constant[] = Symbol;
-#include "llvm/Frontend/Offloading/InputGenGPUABI.def"
-} // namespace llvm::omp::target::plugin::inputgen
-#endif
-
 #endif
