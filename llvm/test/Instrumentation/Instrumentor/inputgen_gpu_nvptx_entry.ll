@@ -1,5 +1,5 @@
-; Verify entry generation uses the NVPTX kernel calling convention.
-; RUN: opt < %s -passes=inputgen-gpu -inputgen-gpu-entry-function=vvv_foo -S | FileCheck %s
+; Verify the AMDGPU-only factory entry rejects NVPTX without changing IR.
+; RUN: opt < %s -passes=inputgen-gpu -inputgen-gpu-entry-function=vvv_foo -disable-output 2>&1 | FileCheck %s
 
 target triple = "nvptx64-nvidia-cuda"
 
@@ -9,4 +9,4 @@ entry:
   ret i32 %v
 }
 
-; CHECK-LABEL: define ptx_kernel void @__ig_entry_vvv_foo(
+; CHECK: InputGen GPU objects currently require AMDGPU, not target 'nvptx64-nvidia-cuda'

@@ -57,9 +57,7 @@ struct EntryKernelInfo {
   Function *EntryFunction = nullptr;
 };
 
-std::string getInputGenGPUEntryPointName(StringRef EntryFunctionName) {
-  return (Twine("__ig_entry_") + EntryFunctionName).str();
-}
+constexpr StringLiteral InputGenGPUEntryPointName = "__ig_entry";
 
 // Accept scalar values the factory callbacks can fabricate byte-for-byte by
 // checking both their kind and fixed store size.
@@ -109,10 +107,10 @@ bool createInputGenGPUEntryKernel(Module &M, InstrumentorIRBuilderTy &IIRB,
   }
 
   // Reserve a deterministic wrapper name and avoid replacing an existing one.
-  std::string EntryPointName = getInputGenGPUEntryPointName(EntryFunctionName);
-  if (M.getNamedValue(EntryPointName)) {
+  if (M.getNamedValue(InputGenGPUEntryPointName)) {
     IIRB.Ctx.diagnose(DiagnosticInfoInstrumentation(
-        Twine("inputgen entry point '") + EntryPointName + "' already exists",
+        Twine("inputgen entry point '") + InputGenGPUEntryPointName +
+            "' already exists",
         DS_Warning));
     return false;
   }
@@ -168,7 +166,7 @@ bool createInputGenGPUEntryKernel(Module &M, InstrumentorIRBuilderTy &IIRB,
   FunctionType *EntryPointTy =
       FunctionType::get(IIRB.VoidTy, {IIRB.PtrTy}, /*isVarArg=*/false);
   Function *EntryPoint = Function::Create(
-      EntryPointTy, GlobalValue::ExternalLinkage, EntryPointName, M);
+      EntryPointTy, GlobalValue::ExternalLinkage, InputGenGPUEntryPointName, M);
   EntryPoint->setCallingConv(CallingConv::AMDGPU_KERNEL);
   EntryPoint->addFnAttr("instrument");
 

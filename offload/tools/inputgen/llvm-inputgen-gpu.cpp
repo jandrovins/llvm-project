@@ -18,7 +18,6 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/Twine.h"
 #include "llvm/Frontend/Offloading/Utility.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
@@ -53,6 +52,7 @@ constexpr uint64_t DefaultObjectBytes = 1024;
 constexpr uint64_t DefaultResultStride = 8;
 constexpr uint64_t FactoryHeaderBytes =
     (sizeof(InputGenGPUFactoryHeader) + 7) & ~uint64_t(7);
+constexpr StringLiteral InputGenGPUEntryPointName = "__ig_entry";
 
 enum class InputGenMode : int32_t {
   Generate = INPUTGEN_MODE_GENERATE,
@@ -61,7 +61,6 @@ enum class InputGenMode : int32_t {
 
 struct InputGenInvocation {
   InputGenMode Mode;
-  std::string EntryName;
   std::string DataFilename;
   int32_t DeviceId;
   uint32_t NumTeams;
@@ -249,14 +248,6 @@ Error getInteger(const json::Object *Obj, StringRef Key, T &Result) {
   return Error::success();
 }
 
-Error getString(const json::Object *Obj, StringRef Key, StringRef &Result) {
-  std::optional<StringRef> OptStr = Obj->getString(Key);
-  if (!OptStr)
-    return createErr("failed to read JSON string %s", Key.data());
-  Result = *OptStr;
-  return Error::success();
-}
-
 std::string getDefaultInputGenDataFilename(StringRef JsonPath) {
   SmallString<256> Path(JsonPath);
   sys::path::replace_extension(Path, "inputgen");
@@ -291,17 +282,12 @@ Expected<InputGenInvocation> parseInvocation() {
   if (!JsonObj)
     return createErr("invalid JSON file '%s'", JsonFilename.c_str());
 
-  StringRef RecordedKernelName;
-  if (Error Err = getString(JsonObj, "Name", RecordedKernelName))
-    return std::move(Err);
-
   int32_t JsonDeviceId = 0;
   if (Error Err = getInteger(JsonObj, "DeviceId", JsonDeviceId))
     return std::move(Err);
 
   return InputGenInvocation{
       *ModeOrErr,
-      (Twine("__ig_entry_") + RecordedKernelName).str(),
       InputGenDataFilename.empty()
           ? getDefaultInputGenDataFilename(JsonFilename)
           : InputGenDataFilename.getValue(),
@@ -322,12 +308,12 @@ Expected<std::unique_ptr<MemoryBuffer>> loadDeviceImage() {
 }
 
 void buildOffloadEntries(
-    const std::string &EntryName,
     SmallVectorImpl<llvm::offloading::EntryTy> &OffloadEntries) {
   OffloadEntries.assign(
       1, llvm::offloading::EntryTy{0x0, 0x1, object::OffloadKind::OFK_OpenMP, 0,
                                    nullptr, nullptr, 0, 0, nullptr});
-  OffloadEntries[0].SymbolName = const_cast<char *>(EntryName.c_str());
+  OffloadEntries[0].SymbolName =
+      const_cast<char *>(InputGenGPUEntryPointName.data());
   OffloadEntries[0].Address = reinterpret_cast<void *>(0x1);
 }
 
@@ -739,7 +725,7 @@ Error launchEntryKernel(const InputGenInvocation &Invocation,
                           Invocation.NumThreads, Entry.Address,
                           &Args.KernelArgs) != OMP_TGT_SUCCESS)
     return createErr("failed to launch entry kernel '%s'",
-                     Invocation.EntryName.c_str());
+                     InputGenGPUEntryPointName.data());
   return Error::success();
 }
 
@@ -804,7 +790,7 @@ Error runInputGenGPU() {
   std::unique_ptr<MemoryBuffer> ImageBuffer = std::move(*ImageBufferOrErr);
 
   SmallVector<llvm::offloading::EntryTy> OffloadEntries;
-  buildOffloadEntries(Invocation.EntryName, OffloadEntries);
+  buildOffloadEntries(OffloadEntries);
   __tgt_device_image DeviceImage;
   __tgt_bin_desc Desc;
   registerDeviceImage(*ImageBuffer, OffloadEntries, DeviceImage, Desc);

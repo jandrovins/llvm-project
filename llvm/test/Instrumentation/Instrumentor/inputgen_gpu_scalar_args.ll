@@ -11,7 +11,7 @@ entry:
   ret i32 %r
 }
 
-; CHECK-LABEL: define amdgpu_kernel void @__ig_entry_vvv_foo(
+; CHECK-LABEL: define amdgpu_kernel void @__ig_entry(
 ; CHECK: [[ARGUMENTS:%.*]] = call ptr @__ig_prepare_lane(ptr %context, i64 {{%.*}}, i64 {{%.*}}, i64 16, i32 0)
 ; CHECK: call ptr @__ig_pre_load(ptr {{%.*}}, i32 0, i64 4, i64 4, i32 12)
 ; CHECK: [[X:%.*]] = load i32, ptr {{%.*}}, align 4

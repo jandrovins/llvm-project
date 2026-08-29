@@ -9,7 +9,7 @@ target triple = "amdgcn-amd-amdhsa"
 ; CHECK-DAG: @inputgen_runtime_private = internal global i32 0
 ; CHECK-LABEL: define hidden i32 @vvv_foo(
 ; CHECK: call ptr @__ig_pre_load(
-; CHECK-LABEL: define amdgpu_kernel void @__ig_entry_vvv_foo(
+; CHECK-LABEL: define amdgpu_kernel void @__ig_entry(
 ; CHECK: define protected ptr @__ig_prepare_lane(
 ; CHECK: define protected void @__ig_store_result(
 ; CHECK: define protected ptr @__ig_pre_load(
