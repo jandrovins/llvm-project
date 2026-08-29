@@ -7,22 +7,8 @@ set(INPUTGEN_GPU_RT_TARGET_TRIPLES "" CACHE STRING
   "Offload target triples for InputGen GPU runtime bitcode")
 
 set(INPUTGEN_GPU_RT_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
-set(INPUTGEN_GPU_RT_INTERFACE_INCLUDE_DIR
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../../plugins-nextgen/common/include)
-if(NOT INPUTGEN_GPU_RT_LLVM_INCLUDE_DIR)
-  if(LLVM_MAIN_INCLUDE_DIR)
-    set(INPUTGEN_GPU_RT_LLVM_INCLUDE_DIR ${LLVM_MAIN_INCLUDE_DIR})
-  else()
-    get_filename_component(INPUTGEN_GPU_RT_LLVM_INCLUDE_DIR
-      ${CMAKE_CURRENT_SOURCE_DIR}/../../../../llvm/include ABSOLUTE)
-  endif()
-endif()
 set_property(GLOBAL PROPERTY INPUTGEN_GPU_RT_SOURCE_DIR
              ${INPUTGEN_GPU_RT_SOURCE_DIR})
-set_property(GLOBAL PROPERTY INPUTGEN_GPU_RT_INTERFACE_INCLUDE_DIR
-             ${INPUTGEN_GPU_RT_INTERFACE_INCLUDE_DIR})
-set_property(GLOBAL PROPERTY INPUTGEN_GPU_RT_LLVM_INCLUDE_DIR
-             ${INPUTGEN_GPU_RT_LLVM_INCLUDE_DIR})
 
 if(INPUTGEN_GPU_RT_TARGET_TRIPLES)
   set(inputgen_gpu_rt_targets ${INPUTGEN_GPU_RT_TARGET_TRIPLES})
@@ -49,9 +35,7 @@ endif()
 set(inputgen_gpu_rt_common_deps
   ${INPUTGEN_GPU_RT_SOURCE_DIR}/inputgen_gpu_factory.h
   ${INPUTGEN_GPU_RT_SOURCE_DIR}/inputgen_gpu_entry_internal.h
-  ${INPUTGEN_GPU_RT_SOURCE_DIR}/inputgen_gpu_instrumentor_abi.h
-  ${INPUTGEN_GPU_RT_INTERFACE_INCLUDE_DIR}/InputGenInterface.hpp
-  ${INPUTGEN_GPU_RT_LLVM_INCLUDE_DIR}/llvm/Frontend/Offloading/InputGenGPUABI.def)
+  ${INPUTGEN_GPU_RT_SOURCE_DIR}/inputgen_gpu_instrumentor_abi.h)
 
 add_custom_target(inputgen-gpu-runtime-bc)
 add_custom_target(inputgen-gpu-runtime-bc-amdgpu)
@@ -62,8 +46,6 @@ function(add_inputgen_gpu_runtime target_key compiler_triple family)
   set(common_flags
     -DINPUTGEN_GPU_RT_DEVICE=1
     -I${INPUTGEN_GPU_RT_SOURCE_DIR}
-    -I${INPUTGEN_GPU_RT_INTERFACE_INCLUDE_DIR}
-    -I${INPUTGEN_GPU_RT_LLVM_INCLUDE_DIR}
     -O3 -g -Wall -Wextra -std=c11
     --target=${compiler_triple}
     -nogpulib -nostdlibinc -fconvergent-functions -fvisibility=protected

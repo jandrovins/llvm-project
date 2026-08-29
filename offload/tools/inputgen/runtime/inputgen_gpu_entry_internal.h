@@ -11,7 +11,6 @@
 
 #include <stdint.h>
 
-#include "InputGenInterface.hpp"
 #include "inputgen_gpu_factory.h"
 #include "inputgen_gpu_instrumentor_abi.h"
 

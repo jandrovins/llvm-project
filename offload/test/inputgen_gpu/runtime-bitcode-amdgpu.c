@@ -1,12 +1,10 @@
 // Verify AMDGPU runtime bitcode defines the direct-entry state and callback ABI.
 // RUN: %clang --target=amdgcn-amd-amdhsa -DINPUTGEN_GPU_RT_DEVICE=1 \
-// RUN:   -I%inputgen-gpu-src -I%inputgen-gpu-interface-include \
-// RUN:   -I%inputgen-gpu-llvm-include -O3 -std=c11 -nogpulib -nostdlibinc \
+// RUN:   -I%inputgen-gpu-src -O3 -std=c11 -nogpulib -nostdlibinc \
 // RUN:   -fconvergent-functions -fvisibility=protected -flto -c -emit-llvm \
 // RUN:   %inputgen-gpu-src/inputgen_gpu_entry_state.c -o %t.state.bc
 // RUN: %clang --target=amdgcn-amd-amdhsa -DINPUTGEN_GPU_RT_DEVICE=1 \
-// RUN:   -I%inputgen-gpu-src -I%inputgen-gpu-interface-include \
-// RUN:   -I%inputgen-gpu-llvm-include -O3 -std=c11 -nogpulib -nostdlibinc \
+// RUN:   -I%inputgen-gpu-src -O3 -std=c11 -nogpulib -nostdlibinc \
 // RUN:   -fconvergent-functions -fvisibility=protected -flto -c -emit-llvm \
 // RUN:   %inputgen-gpu-src/inputgen_gpu_entry_callbacks.c -o %t.callbacks.bc
 // RUN: llvm-link %t.state.bc %t.callbacks.bc -o %t.bc

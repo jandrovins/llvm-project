@@ -13,7 +13,6 @@
 
 #include "omptarget.h"
 
-#include "InputGenInterface.hpp"
 #include "runtime/inputgen_gpu_factory.h"
 
 #include "llvm/ADT/ArrayRef.h"
