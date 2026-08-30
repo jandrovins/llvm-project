@@ -34,7 +34,7 @@ endif()
 
 set(inputgen_gpu_rt_common_deps
   ${INPUTGEN_GPU_RT_SOURCE_DIR}/inputgen_gpu_factory.h
-  ${INPUTGEN_GPU_RT_SOURCE_DIR}/inputgen_gpu_entry_internal.h
+  ${INPUTGEN_GPU_RT_SOURCE_DIR}/inputgen_gpu_runtime_internal.h
   ${INPUTGEN_GPU_RT_SOURCE_DIR}/inputgen_gpu_instrumentor_abi.h)
 
 add_custom_target(inputgen-gpu-runtime-bc)
@@ -51,7 +51,7 @@ function(add_inputgen_gpu_runtime target_key compiler_triple family)
     -nogpulib -nostdlibinc -fconvergent-functions -fvisibility=protected
     -flto -c -emit-llvm)
 
-  foreach(source IN ITEMS inputgen_gpu_entry_state.c inputgen_gpu_entry_callbacks.c)
+  foreach(source IN ITEMS inputgen_gpu_runtime_state.c inputgen_gpu_runtime_callbacks.c)
     get_filename_component(stem ${source} NAME_WE)
     add_custom_command(
       OUTPUT ${output_dir}/${stem}.bc
@@ -63,17 +63,17 @@ function(add_inputgen_gpu_runtime target_key compiler_triple family)
       VERBATIM)
   endforeach()
   add_custom_command(
-    OUTPUT ${output_dir}/inputgen_gpu_entry_runtime.bc
+    OUTPUT ${output_dir}/inputgen_gpu_runtime.bc
     COMMAND ${INPUTGEN_GPU_RT_LLVM_LINK}
-      ${output_dir}/inputgen_gpu_entry_state.bc
-      ${output_dir}/inputgen_gpu_entry_callbacks.bc
-      -o ${output_dir}/inputgen_gpu_entry_runtime.bc
-    DEPENDS ${output_dir}/inputgen_gpu_entry_state.bc
-            ${output_dir}/inputgen_gpu_entry_callbacks.bc
+      ${output_dir}/inputgen_gpu_runtime_state.bc
+      ${output_dir}/inputgen_gpu_runtime_callbacks.bc
+      -o ${output_dir}/inputgen_gpu_runtime.bc
+    DEPENDS ${output_dir}/inputgen_gpu_runtime_state.bc
+            ${output_dir}/inputgen_gpu_runtime_callbacks.bc
     COMMENT "Linking InputGen GPU runtime bitcode for ${compiler_triple}"
     VERBATIM)
   add_custom_target(inputgen-gpu-runtime-bc-${target_key}
-    DEPENDS ${output_dir}/inputgen_gpu_entry_runtime.bc)
+    DEPENDS ${output_dir}/inputgen_gpu_runtime.bc)
   add_dependencies(inputgen-gpu-runtime-bc inputgen-gpu-runtime-bc-${target_key})
   add_dependencies(inputgen-gpu-runtime-bc-${family} inputgen-gpu-runtime-bc-${target_key})
   set_property(GLOBAL PROPERTY INPUTGEN_GPU_RT_${target_key}_DIR ${output_dir})

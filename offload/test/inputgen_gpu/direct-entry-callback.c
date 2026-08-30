@@ -1,9 +1,9 @@
 // Verify lazy pointer-slot creation and replay reconstruction.
-// RUN: %clang -I%inputgen-gpu-src %inputgen-gpu-src/inputgen_gpu_entry_state.c \
-// RUN:   %inputgen-gpu-src/inputgen_gpu_entry_callbacks.c %s -o %t
+// RUN: %clang -I%inputgen-gpu-src %inputgen-gpu-src/inputgen_gpu_runtime_state.c \
+// RUN:   %inputgen-gpu-src/inputgen_gpu_runtime_callbacks.c %s -o %t
 // RUN: %t | FileCheck %s
 
-#include "inputgen_gpu_entry_internal.h"
+#include "inputgen_gpu_runtime_internal.h"
 
 #include <stdint.h>
 #include <stdio.h>

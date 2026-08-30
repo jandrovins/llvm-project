@@ -60,11 +60,11 @@ if(TARGET omptarget)
         get_property(INPUTGEN_GPU_RT_TEST_COMPILER_TRIPLE GLOBAL PROPERTY
                      INPUTGEN_GPU_RT_${INPUTGEN_GPU_RT_TEST_KEY}_TRIPLE)
         set(INPUTGEN_GPU_RT_TEST_STATE_BC
-            ${INPUTGEN_GPU_RT_TEST_DIR}/inputgen_gpu_entry_state.bc)
+            ${INPUTGEN_GPU_RT_TEST_DIR}/inputgen_gpu_runtime_state.bc)
         set(INPUTGEN_GPU_RT_TEST_CALLBACKS_BC
-            ${INPUTGEN_GPU_RT_TEST_DIR}/inputgen_gpu_entry_callbacks.bc)
+            ${INPUTGEN_GPU_RT_TEST_DIR}/inputgen_gpu_runtime_callbacks.bc)
         set(INPUTGEN_GPU_RT_TEST_RUNTIME_BC
-            ${INPUTGEN_GPU_RT_TEST_DIR}/inputgen_gpu_entry_runtime.bc)
+            ${INPUTGEN_GPU_RT_TEST_DIR}/inputgen_gpu_runtime.bc)
       endif()
     endif()
 
