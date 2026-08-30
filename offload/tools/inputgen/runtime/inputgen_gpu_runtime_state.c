@@ -1,6 +1,6 @@
-//===-- InputGen GPU Entry Runtime State ---------------------------------===//
+//===-- InputGen GPU Runtime State ---------------------------------------===//
 
-#include "inputgen_gpu_entry_internal.h"
+#include "inputgen_gpu_runtime_internal.h"
 
 // The AMDGPU backend cannot lower private-address-space globals. Keep the one
 // launch-wide context word in AS1 and derive each GPU thread's slice from its
@@ -9,6 +9,7 @@ static __attribute__((address_space(1))) uint64_t FactoryContextBits;
 
 static uint64_t alignTo(uint64_t Value, uint64_t Alignment);
 
+// Recover the launch-wide factory selected by this GPU thread's entry wrapper.
 static InputGenGPUFactoryHeader *currentFactory(void) {
   return (InputGenGPUFactoryHeader *)(uintptr_t)FactoryContextBits;
 }
@@ -24,6 +25,7 @@ static InputGenGPUFactorySliceHeader *currentSlice(void) {
   uint64_t WorkgroupIndex = 0;
   uint64_t WorkitemIndex = 0;
 #endif
+  // Map the hardware workgroup/workitem pair to this GPU thread's slice.
   if (WorkitemIndex >= Factory->ThreadsPerTeam ||
       WorkgroupIndex > (UINT64_MAX - WorkitemIndex) / Factory->ThreadsPerTeam)
     return 0;
@@ -40,6 +42,7 @@ static uint64_t alignTo(uint64_t Value, uint64_t Alignment) {
 }
 
 static void setError(InputGenGPUFactorySliceHeader *Slice, uint32_t Error) {
+  // Preserve the first error so the launcher reports the original failure.
   if (Slice->Error == INPUTGEN_GPU_FACTORY_ERROR_NONE)
     Slice->Error = Error;
 }
@@ -60,6 +63,7 @@ relationTable(InputGenGPUFactorySliceHeader *Slice) {
 
 static InputGenGPUFactoryObjectHeader *
 getObject(InputGenGPUFactorySliceHeader *Slice, uint32_t ObjectIndex) {
+  // Resolve a logical object index through the per-slice offset table.
   if (ObjectIndex >= Slice->ObjectCount) {
     setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_LAYOUT);
     return 0;
@@ -80,6 +84,7 @@ getObject(InputGenGPUFactorySliceHeader *Slice, uint32_t ObjectIndex) {
 static InputGenGPUFactoryObjectHeader *
 allocateObject(InputGenGPUFactorySliceHeader *Slice, uint64_t SliceBytes,
                uint32_t ObjectIndex, uint64_t Capacity) {
+  // Reserve the next fixed-capacity object record without growing the slice.
   if (ObjectIndex != Slice->ObjectCount || ObjectIndex >= Slice->ObjectLimit ||
       ObjectIndex > INPUTGEN_GPU_VPTR_OBJECT_MASK || Capacity > UINT32_MAX) {
     setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_CAPACITY);
@@ -104,6 +109,7 @@ allocateObject(InputGenGPUFactorySliceHeader *Slice, uint64_t SliceBytes,
 }
 
 static void *encodePointer(uint32_t ObjectIndex, int64_t Offset) {
+  // Keep object identity and pointer arithmetic in an AS0 handle value.
   uint64_t Field = (uint64_t)(Offset + (int64_t)INPUTGEN_GPU_VPTR_OFFSET_BIAS);
   uint64_t Bits = ((uint64_t)INPUTGEN_GPU_VPTR_MAGIC << 60) |
                   ((uint64_t)ObjectIndex << INPUTGEN_GPU_VPTR_OFFSET_BITS) |
@@ -132,6 +138,7 @@ void *__ig_prepare_lane(void *Context, uint64_t WorkgroupIndex,
   FactoryContextBits = (uint64_t)(uintptr_t)Factory;
 
   if (Factory->Mode == INPUTGEN_MODE_GENERATE) {
+    // Initialize tables and object zero; pointer loads allocate later objects.
     __builtin_memset(Slice, 0, Factory->SliceBytes);
     Slice->Magic = INPUTGEN_GPU_FACTORY_SLICE_MAGIC;
     Slice->Version = INPUTGEN_GPU_FACTORY_VERSION;
@@ -157,6 +164,7 @@ void *__ig_prepare_lane(void *Context, uint64_t WorkgroupIndex,
     if (!allocateObject(Slice, Factory->SliceBytes, 0, ArgumentBytes))
       return 0;
   } else if (Factory->Mode == INPUTGEN_MODE_REPLAY) {
+    // Accept only the host-reconstructed layout from the matching recording.
     if (Slice->Magic != INPUTGEN_GPU_FACTORY_SLICE_MAGIC ||
         Slice->Version != INPUTGEN_GPU_FACTORY_VERSION ||
         Slice->SliceIndex != LaneIndex ||
@@ -183,6 +191,7 @@ void *__ig_prepare_lane(void *Context, uint64_t WorkgroupIndex,
 }
 
 void __ig_store_result(uint64_t Bits, uint32_t Size) {
+  // Keep each user-function return value in its owning GPU thread's slice.
   InputGenGPUFactorySliceHeader *Slice = currentSlice();
   if (Slice) {
     Slice->ResultBits = Bits;

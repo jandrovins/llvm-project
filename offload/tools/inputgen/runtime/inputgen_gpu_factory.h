@@ -7,8 +7,8 @@
 //===----------------------------------------------------------------------===//
 //
 // This header is intentionally private to the InputGen GPU launcher and the
-// device runtime. LLVM IR generation uses opaque runtime calls and must not
-// depend on these layout details.
+// device runtime. It defines the in-memory factory and on-disk input layouts;
+// LLVM IR generation uses opaque runtime calls and must not depend on them.
 //
 //===----------------------------------------------------------------------===//
 
@@ -22,23 +22,27 @@
 #define INPUTGEN_GPU_FACTORY_OBJECT_MAGIC 0x49474F42u
 #define INPUTGEN_GPU_INPUT_MAGIC 0x494750554F424A31ULL
 
+// Select whether callbacks fabricate input or require reconstructed input.
 enum {
   INPUTGEN_MODE_GENERATE = 1,
   INPUTGEN_MODE_REPLAY = 2,
 };
 
+// Track input bytes, later writes, and logical pointer-slot bytes separately.
 enum {
   INPUTGEN_GPU_MASK_READ = 1u,
   INPUTGEN_GPU_MASK_WRITTEN = 2u,
   INPUTGEN_GPU_MASK_POINTER = 4u,
 };
 
-/* Program-visible runtime pointers are AS0 values, not device addresses. */
+// Program-visible runtime pointers are encoded AS0 object handles, not device
+// addresses. The callback decodes their object index and signed byte offset.
 #define INPUTGEN_GPU_VPTR_MAGIC UINT64_C(0xA)
 #define INPUTGEN_GPU_VPTR_OFFSET_BITS 40u
 #define INPUTGEN_GPU_VPTR_OFFSET_BIAS (UINT64_C(1) << 39)
 #define INPUTGEN_GPU_VPTR_OBJECT_MASK ((UINT64_C(1) << 20) - 1)
 
+// Describes the launch-wide factory allocation passed as the opaque context.
 typedef struct InputGenGPUFactoryHeader {
   uint32_t Magic;
   uint32_t Version;
@@ -51,6 +55,7 @@ typedef struct InputGenGPUFactoryHeader {
   uint64_t FactoryBytes;
 } InputGenGPUFactoryHeader;
 
+// Connects one pointer slot to a target object without recording an address.
 typedef struct InputGenGPUFactoryPointerRelation {
   uint32_t OwnerObject;
   uint32_t SlotOffset;
@@ -67,6 +72,7 @@ enum {
   INPUTGEN_GPU_FACTORY_ERROR_TYPE = 5u,
 };
 
+// Records one GPU thread's fixed slice, allocator state, and return value.
 typedef struct InputGenGPUFactorySliceHeader {
   uint32_t Magic;
   uint32_t Version;
@@ -88,6 +94,7 @@ typedef struct InputGenGPUFactorySliceHeader {
   uint32_t ResultReserved;
 } InputGenGPUFactorySliceHeader;
 
+// Prefixes an object record whose data, mask, and saved bytes follow in order.
 typedef struct InputGenGPUFactoryObjectHeader {
   uint32_t Magic;
   uint32_t ObjectIndex;
@@ -95,6 +102,7 @@ typedef struct InputGenGPUFactoryObjectHeader {
   uint32_t SliceOffset;
 } InputGenGPUFactoryObjectHeader;
 
+// Begins the sparse on-disk input record and fixes replay-compatible geometry.
 typedef struct InputGenGPUInputFileHeader {
   uint64_t Magic;
   uint32_t Version;
@@ -106,11 +114,13 @@ typedef struct InputGenGPUInputFileHeader {
   uint64_t ResultStride;
 } InputGenGPUInputFileHeader;
 
+// Counts one GPU thread's serialized objects and pointer relations.
 typedef struct InputGenGPUInputFileLaneHeader {
   uint32_t ObjectCount;
   uint32_t RelationCount;
 } InputGenGPUInputFileLaneHeader;
 
+// Persists a logical pointer relation for replay reconstruction.
 typedef struct InputGenGPUInputFileRelation {
   uint32_t OwnerObject;
   uint32_t SlotOffset;
@@ -118,11 +128,13 @@ typedef struct InputGenGPUInputFileRelation {
   uint32_t TargetOffset;
 } InputGenGPUInputFileRelation;
 
+// Describes one object's capacity and the sparse byte ranges following it.
 typedef struct InputGenGPUInputFileObjectHeader {
   uint32_t Capacity;
   uint32_t NumRuns;
 } InputGenGPUInputFileObjectHeader;
 
+// Describes one contiguous recorded scalar-input range within an object.
 typedef struct InputGenGPUInputFileRunHeader {
   uint32_t Offset;
   uint32_t Size;

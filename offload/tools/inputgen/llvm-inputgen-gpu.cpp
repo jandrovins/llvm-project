@@ -58,6 +58,7 @@ enum class InputGenMode : int32_t {
   Replay = INPUTGEN_MODE_REPLAY,
 };
 
+// Holds one parsed launcher invocation and its factory layout settings.
 struct InputGenInvocation {
   InputGenMode Mode;
   std::string DataFilename;
@@ -68,26 +69,31 @@ struct InputGenInvocation {
   uint64_t ObjectBytes;
 };
 
+// Stores one contiguous range of observed input bytes within an object.
 struct InputRun {
   uint32_t Offset = 0;
   std::vector<char> Bytes;
 };
 
+// Collects an object's fixed capacity and its sparse serialized input ranges.
 struct InputObject {
   uint32_t Capacity = 0;
   std::vector<InputRun> Runs;
 };
 
+// Represents one GPU thread's serialized objects and pointer relationships.
 struct InputLane {
   std::vector<InputObject> Objects;
   std::vector<InputGenGPUInputFileRelation> Relations;
 };
 
+// Owns the complete host-side representation of one InputGen data file.
 struct InputRecord {
   InputGenGPUInputFileHeader Header{};
   std::vector<InputLane> Lanes;
 };
 
+// Owns the launcher-allocated device factory and releases it on destruction.
 class DeviceAllocations {
 public:
   DeviceAllocations(void *Factory, int32_t DeviceId)
@@ -112,6 +118,7 @@ public:
   int32_t DeviceId = 0;
 };
 
+// Owns the arrays backing the single opaque-context kernel argument.
 struct KernelLaunchArguments {
   void *ArgBasePtrs[1] = {};
   void *ArgPtrs[1] = {};

@@ -1,6 +1,6 @@
-//===-- InputGen GPU Entry Runtime Device Callbacks ----------------------===//
+//===-- InputGen GPU Runtime Device Callbacks ----------------------------===//
 
-#include "inputgen_gpu_entry_internal.h"
+#include "inputgen_gpu_runtime_internal.h"
 
 InputGenGPUFactorySliceHeader *__ig_current_slice(void);
 InputGenGPUFactoryObjectHeader *__ig_get_object(uint32_t);
@@ -13,6 +13,7 @@ static void setError(InputGenGPUFactorySliceHeader *Slice, uint32_t Error) {
 }
 
 static uint64_t generatedBits(int32_t TypeId, int64_t Size, int *IsValid) {
+  // Fabricate the deterministic scalar value used for unseen generated input.
   *IsValid = 1;
   if (TypeId == IntegerTyID)
     return 9;
@@ -27,6 +28,7 @@ static uint64_t generatedBits(int32_t TypeId, int64_t Size, int *IsValid) {
 static InputGenGPUFactoryObjectHeader *
 decodePointer(void *Pointer, int32_t PointerAS, int64_t Size,
               uint32_t *ObjectIndex, uint32_t *OffsetOut) {
+  // Translate an encoded AS0 handle into a checked factory object range.
   InputGenGPUFactorySliceHeader *Slice = __ig_current_slice();
   if (!Slice || PointerAS != 0 || Size <= 0 || Size > 8)
     return 0;
@@ -56,6 +58,7 @@ static void *dataAddress(InputGenGPUFactoryObjectHeader *Object,
 static InputGenGPUFactoryPointerRelation *
 findRelation(InputGenGPUFactorySliceHeader *Slice, uint32_t Owner,
              uint32_t Offset) {
+  // Find the target object already assigned to this pointer slot.
   InputGenGPUFactoryPointerRelation *Relations = __ig_relations();
   for (uint32_t I = 0; Relations && I < Slice->RelationCount; ++I)
     if (Relations[I].OwnerObject == Owner && Relations[I].SlotOffset == Offset)
@@ -64,6 +67,7 @@ findRelation(InputGenGPUFactorySliceHeader *Slice, uint32_t Owner,
 }
 
 static void *encodePointer(uint32_t ObjectIndex, int64_t Offset) {
+  // Recreate a program-visible handle from a recorded logical target.
   uint64_t Field = (uint64_t)(Offset + (int64_t)INPUTGEN_GPU_VPTR_OFFSET_BIAS);
   return (void *)(uintptr_t)(((uint64_t)INPUTGEN_GPU_VPTR_MAGIC << 60) |
                              ((uint64_t)ObjectIndex
@@ -84,6 +88,7 @@ void *__ig_pre_load(void *Pointer, int32_t PointerAS, int64_t ValueSize,
   char *Data = (char *)(Object + 1);
   unsigned char *Mask = (unsigned char *)(Data + Object->Capacity);
   if (ValueTypeId == PointerTyID) {
+    // Pointer slots record object relationships, never a serialized address.
     if (ValueSize != 8) {
       setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_TYPE);
       return Pointer;
@@ -91,6 +96,7 @@ void *__ig_pre_load(void *Pointer, int32_t PointerAS, int64_t ValueSize,
     InputGenGPUFactoryPointerRelation *Relation =
         findRelation(Slice, Owner, Offset);
     if (!Relation) {
+      // Generation reserves the target object; replay requires its relation.
       if (Slice->Mode != INPUTGEN_MODE_GENERATE ||
           Slice->RelationCount == Slice->RelationLimit) {
         setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_REPLAY);
@@ -128,6 +134,7 @@ void *__ig_pre_load(void *Pointer, int32_t PointerAS, int64_t ValueSize,
       setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_REPLAY);
       return Pointer;
     }
+    // First reads become input; a prior write supplies the current value.
     Data[Offset + I] = (char)(Bits >> (I * 8));
     Mask[Offset + I] = State | INPUTGEN_GPU_MASK_READ;
   }
@@ -146,6 +153,7 @@ void *__ig_pre_store(void *Pointer, int32_t PointerAS, int64_t ValueSize,
   char *Data = (char *)(Object + 1);
   unsigned char *Mask = (unsigned char *)(Data + Object->Capacity);
   char *Saved = (char *)(Mask + Object->Capacity);
+  // Preserve input before its first overwrite so serialization keeps the read.
   for (uint32_t I = 0; I < (uint32_t)ValueSize; ++I) {
     unsigned char State = Mask[Offset + I];
     if ((State & INPUTGEN_GPU_MASK_READ) &&
