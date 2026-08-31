@@ -491,14 +491,28 @@ Expected<InputRecord> serializeFactory(const InputGenInvocation &Invocation,
       return createErr("factory copy is truncated");
     auto *Slice = reinterpret_cast<const InputGenGPUFactorySliceHeader *>(
         Factory.data() + SliceOffset);
-    if (Slice->Magic != INPUTGEN_GPU_FACTORY_SLICE_MAGIC ||
-        Slice->Version != INPUTGEN_GPU_FACTORY_VERSION || Slice->Error ||
-        Slice->SliceIndex != LaneIndex || !Slice->ObjectCount ||
-        Slice->ObjectCount != Slice->ObjectLimit ||
-        Slice->RelationCount + 1 != Slice->ObjectCount ||
-        Slice->RelationCount != Slice->RelationLimit)
-      return createErr("device lane %u reported InputGen factory error %u",
+    if (Slice->Magic != INPUTGEN_GPU_FACTORY_SLICE_MAGIC)
+      return createErr("device GPU thread %u has invalid factory magic",
+                       LaneIndex);
+    if (Slice->Version != INPUTGEN_GPU_FACTORY_VERSION)
+      return createErr("device GPU thread %u has factory version %u", LaneIndex,
+                       Slice->Version);
+    if (Slice->Error)
+      return createErr("device GPU thread %u reported InputGen factory error %u",
                        LaneIndex, Slice->Error);
+    if (Slice->SliceIndex != LaneIndex)
+      return createErr("device GPU thread %u reported slice index %u",
+                       LaneIndex, Slice->SliceIndex);
+    if (!Slice->ObjectCount)
+      return createErr("device GPU thread %u created no argument object",
+                       LaneIndex);
+    if (Slice->ObjectCount != Slice->ObjectLimit)
+      return createErr("device GPU thread %u created %u of %u objects",
+                       LaneIndex, Slice->ObjectCount, Slice->ObjectLimit);
+    if (Slice->RelationCount + 1 != Slice->ObjectCount ||
+        Slice->RelationCount != Slice->RelationLimit)
+      return createErr("device GPU thread %u has inconsistent pointer relations",
+                       LaneIndex);
 
     InputLane &Lane = Record.Lanes[LaneIndex];
     Lane.Objects.reserve(Slice->ObjectCount);
