@@ -15,11 +15,11 @@ static void setError(InputGenGPUFactorySliceHeader *Slice, uint32_t Error) {
 static uint64_t generatedBits(int32_t TypeId, int64_t Size, int *IsValid) {
   // Fabricate the deterministic scalar value used for unseen generated input.
   *IsValid = 1;
-  if (TypeId == IntegerTyID)
+  if (TypeId == INPUTGEN_GPU_VALUE_INTEGER)
     return 9;
-  if (TypeId == FloatTyID && Size == 4)
+  if (TypeId == INPUTGEN_GPU_VALUE_FLOAT && Size == 4)
     return 0x41100000ULL;
-  if (TypeId == DoubleTyID && Size == 8)
+  if (TypeId == INPUTGEN_GPU_VALUE_DOUBLE && Size == 8)
     return 0x4022000000000000ULL;
   *IsValid = 0;
   return 0;
@@ -87,7 +87,7 @@ void *__ig_pre_load(void *Pointer, int32_t PointerAS, int64_t ValueSize,
 
   char *Data = (char *)(Object + 1);
   unsigned char *Mask = (unsigned char *)(Data + Object->Capacity);
-  if (ValueTypeId == PointerTyID) {
+  if (ValueTypeId == INPUTGEN_GPU_VALUE_POINTER) {
     // Pointer slots record object relationships, never a serialized address.
     if (ValueSize != 8) {
       setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_TYPE);

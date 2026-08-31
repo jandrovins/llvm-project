@@ -11,8 +11,14 @@
 
 #include <stdint.h>
 
-// llvm::Type::TypeID values. Keep this minimal device ABI independent of LLVM
-// C++ and only expose the scalar types supported by the first object model.
-enum { FloatTyID = 2, DoubleTyID = 3, IntegerTyID = 12, PointerTyID = 14 };
+// Stable InputGen GPU value kinds.  Do not use llvm::Type::TypeID values here:
+// they are an implementation detail of LLVM C++ and can change independently
+// of this device ABI.
+enum {
+  INPUTGEN_GPU_VALUE_INTEGER = 1,
+  INPUTGEN_GPU_VALUE_FLOAT = 2,
+  INPUTGEN_GPU_VALUE_DOUBLE = 3,
+  INPUTGEN_GPU_VALUE_POINTER = 4,
+};
 
 #endif

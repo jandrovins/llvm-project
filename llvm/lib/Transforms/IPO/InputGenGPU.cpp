@@ -78,6 +78,37 @@ bool isSupportedScalarType(Type *Ty, const DataLayout &DL) {
   }
 }
 
+// Keep the device callback ABI independent of llvm::Type::TypeID.  The
+// callbacks only support this small, deliberate type set.
+uint32_t getInputGenGPUValueKind(Type *Ty) {
+  if (Ty->isIntegerTy())
+    return 1;
+  if (Ty->isFloatTy())
+    return 2;
+  if (Ty->isDoubleTy())
+    return 3;
+  if (Ty->isPointerTy())
+    return 4;
+  llvm_unreachable("unsupported InputGen GPU callback value type");
+}
+
+void setInputGenGPUValueKindGetter(InstrumentationOpportunity &IO) {
+  for (IRTArg &Arg : IO.IRTArgs) {
+    if (Arg.Name != "value_type_id")
+      continue;
+    Arg.GetterCB = [](Value &V, Type &Ty, InstrumentationConfig &,
+                      InstrumentorIRBuilderTy &) {
+      Type *ValueTy = isa<LoadInst>(V)
+                          ? cast<LoadInst>(V).getType()
+                          : cast<StoreInst>(V).getValueOperand()->getType();
+      return ConstantInt::get(cast<IntegerType>(&Ty),
+                              getInputGenGPUValueKind(ValueTy));
+    };
+    return;
+  }
+  llvm_unreachable("InputGen GPU callback is missing value_type_id");
+}
+
 // Build the GPU wrapper that gives every lane a factory slice, loads scalar
 // arguments from its argument object, and calls the user function.
 bool createInputGenGPUEntryKernel(Module &M, InstrumentorIRBuilderTy &IIRB,
@@ -323,6 +354,7 @@ private:
       return shouldInstrumentMemory(cast<Instruction>(V));
     };
     Load->init(*this, IIRB, &LoadConfig);
+    setInputGenGPUValueKindGetter(*Load);
 
     StoreIO::ConfigTy StoreConfig(/*Enable=*/false);
     StoreConfig.set(StoreIO::PassPointer);
@@ -337,6 +369,7 @@ private:
       return shouldInstrumentMemory(cast<Instruction>(V));
     };
     Store->init(*this, IIRB, &StoreConfig);
+    setInputGenGPUValueKindGetter(*Store);
   }
 
   EntryKernelInfo &Info;

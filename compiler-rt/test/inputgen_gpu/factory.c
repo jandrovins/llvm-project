@@ -23,9 +23,11 @@ int main(void) {
   Header->FactoryBytes = sizeof(Factory);
 
   void *Arguments = __ig_prepare_lane(Factory, 0, 0, 8, 1);
-  void *PointerSlot = __ig_pre_load(Arguments, 0, 8, 8, PointerTyID);
+  void *PointerSlot = __ig_pre_load(Arguments, 0, 8, 8,
+                                    INPUTGEN_GPU_VALUE_POINTER);
   void *Pointer = *(void **)PointerSlot;
-  int *Value = (int *)__ig_pre_load(Pointer, 0, 4, 4, IntegerTyID);
+  int *Value = (int *)__ig_pre_load(Pointer, 0, 4, 4,
+                                    INPUTGEN_GPU_VALUE_INTEGER);
 
   InputGenGPUFactorySliceHeader *Slice =
       (InputGenGPUFactorySliceHeader *)(Factory + ((sizeof(*Header) + 7) &
@@ -35,9 +37,11 @@ int main(void) {
 
   Header->Mode = INPUTGEN_MODE_REPLAY;
   Arguments = __ig_prepare_lane(Factory, 0, 0, 8, 1);
-  PointerSlot = __ig_pre_load(Arguments, 0, 8, 8, PointerTyID);
+  PointerSlot = __ig_pre_load(Arguments, 0, 8, 8,
+                              INPUTGEN_GPU_VALUE_POINTER);
   Pointer = *(void **)PointerSlot;
-  Value = (int *)__ig_pre_load(Pointer, 0, 4, 4, IntegerTyID);
+  Value = (int *)__ig_pre_load(Pointer, 0, 4, 4,
+                               INPUTGEN_GPU_VALUE_INTEGER);
   printf("replay=%d error=%u\n", *Value, Slice->Error);
   return 0;
 }
