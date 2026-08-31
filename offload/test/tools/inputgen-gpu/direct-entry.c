@@ -14,10 +14,9 @@
 // REQUIRES: amdgpu, inputgen-gpu-runtime, inputgen-gpu-amdgpu-image
 
 // MISSING-DATA: error: failed to open replay data file
-// GENERATE: b = 81
-// GENERATE: generated value = 9
-// REPLAY: b = 81
-// REPLAY: replay value = 9
+// GENERATE: serialized input =
+// GENERATE: result[0] = 81
+// REPLAY: replay result[0] = 81
 // OUTPUT-ERROR: error: failed to open generated data file
 
 int vvv_foo(int *A) { return (*A) * (*A); }
