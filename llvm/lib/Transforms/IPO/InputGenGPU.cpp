@@ -10,6 +10,8 @@
 #include "llvm/Transforms/IPO/Instrumentor.h"
 
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/BasicBlock.h"
@@ -21,6 +23,7 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
@@ -55,6 +58,7 @@ struct ArgumentLayout {
 struct EntryKernelInfo {
   Function *Kernel = nullptr;
   Function *EntryFunction = nullptr;
+  SmallPtrSet<Function *, 8> InstrumentedFunctions;
 };
 
 constexpr StringLiteral InputGenGPUEntryPointName = "__ig_entry";
@@ -109,6 +113,43 @@ void setInputGenGPUValueKindGetter(InstrumentationOpportunity &IO) {
   llvm_unreachable("InputGen GPU callback is missing value_type_id");
 }
 
+// Instrument the selected function and every direct, defined callee it can
+// reach. Virtual pointers pass across those calls unchanged, so the callee's
+// accesses need the same callbacks as the entry function's accesses.
+bool collectInstrumentedFunctions(Function *EntryFn,
+                                  InstrumentorIRBuilderTy &IIRB,
+                                  EntryKernelInfo &Info) {
+  SmallVector<Function *> Worklist{EntryFn};
+  while (!Worklist.empty()) {
+    Function *Fn = Worklist.pop_back_val();
+    if (!Info.InstrumentedFunctions.insert(Fn).second)
+      continue;
+
+    for (Instruction &I : instructions(Fn)) {
+      auto *Call = dyn_cast<CallBase>(&I);
+      if (!Call)
+        continue;
+      Function *Callee = Call->getCalledFunction();
+      bool HasPointerArgument = any_of(Call->args(), [](Value *Arg) {
+        return Arg->getType()->isPointerTy();
+      });
+      if (!Callee || Callee->isDeclaration()) {
+        if (HasPointerArgument) {
+          IIRB.Ctx.diagnose(DiagnosticInfoInstrumentation(
+              Twine("InputGen GPU does not support passing pointer arguments "
+                    "to indirect or external calls in '") +
+                  EntryFn->getName() + "'",
+              DS_Warning));
+          return false;
+        }
+        continue;
+      }
+      Worklist.push_back(Callee);
+    }
+  }
+  return true;
+}
+
 // Build the GPU wrapper that gives every lane a factory slice, loads scalar
 // arguments from its argument object, and calls the user function.
 bool createInputGenGPUEntryKernel(Module &M, InstrumentorIRBuilderTy &IIRB,
@@ -126,6 +167,9 @@ bool createInputGenGPUEntryKernel(Module &M, InstrumentorIRBuilderTy &IIRB,
         DS_Warning));
     return false;
   }
+
+  if (!collectInstrumentedFunctions(EntryFn, IIRB, Info))
+    return false;
 
   // Select the target kernel ABI and X-dimension IDs used to find this GPU
   // thread's factory slice.
@@ -295,6 +339,7 @@ bool createInputGenGPUEntryKernel(Module &M, InstrumentorIRBuilderTy &IIRB,
 
   Info.Kernel = EntryPoint;
   Info.EntryFunction = EntryFn;
+  Info.InstrumentedFunctions.insert(EntryPoint);
   return true;
 }
 
@@ -302,8 +347,10 @@ class InputGenGPUConfig final : public InstrumentationConfig {
 public:
   explicit InputGenGPUConfig(EntryKernelInfo &Info) : Info(Info) {}
 
-  // Select only generic-address-space accesses rooted in user arguments or the
-  // argument object, leaving private allocas and output slots untouched.
+  // Instrument supported generic-address-space accesses in the selected
+  // direct-call closure. The callbacks determine whether an individual pointer
+  // belongs to an InputGen object; restricting this to original arguments
+  // would miss nested pointers and helper-function arguments.
   bool shouldInstrumentMemory(Instruction &I) const {
     Value *Pointer = nullptr;
     Type *ValueTy = nullptr;
@@ -330,13 +377,7 @@ public:
         IsVolatile)
       return false;
 
-    Value *Underlying =
-        const_cast<Value *>(getUnderlyingObjectAggressive(Pointer));
-    if (auto *Arg = dyn_cast<Argument>(Underlying))
-      return Arg->getParent() == Info.EntryFunction;
-    auto *Call = dyn_cast<CallBase>(Underlying);
-    return Call && Call->getCalledFunction() &&
-           Call->getCalledFunction()->getName() == "__ig_prepare_lane";
+    return Info.InstrumentedFunctions.contains(I.getFunction());
   }
 
 private:
