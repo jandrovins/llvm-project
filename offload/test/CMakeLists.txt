@@ -36,36 +36,19 @@ if(TARGET omptarget)
                          ${CURRENT_TARGET})
     if(INPUTGEN_GPU_RT_TEST_TARGET STREQUAL "amdgpu-amd-amdhsa" OR
        INPUTGEN_GPU_RT_TEST_TARGET STREQUAL "amdgcn-amd-amdhsa")
-      set(INPUTGEN_GPU_RT_TEST_KEY amdgpu-amd-amdhsa)
-      set(INPUTGEN_GPU_RT_TEST_DEP inputgen-gpu-runtime-bc-amdgpu)
+      set(INPUTGEN_GPU_RT_TEST_COMPILER_TRIPLE amdgcn-amd-amdhsa)
     elseif(INPUTGEN_GPU_RT_TEST_TARGET STREQUAL "nvptx64-nvidia-cuda")
-      set(INPUTGEN_GPU_RT_TEST_KEY nvptx64-nvidia-cuda)
-      set(INPUTGEN_GPU_RT_TEST_DEP inputgen-gpu-runtime-bc-nvptx)
+      set(INPUTGEN_GPU_RT_TEST_COMPILER_TRIPLE nvptx64-nvidia-cuda)
     else()
-      unset(INPUTGEN_GPU_RT_TEST_KEY)
-      unset(INPUTGEN_GPU_RT_TEST_DEP)
+      unset(INPUTGEN_GPU_RT_TEST_COMPILER_TRIPLE)
     endif()
     set(INPUTGEN_GPU_RT_AVAILABLE FALSE)
-    set(INPUTGEN_GPU_RT_TEST_COMPILER_TRIPLE "")
-    set(INPUTGEN_GPU_RT_TEST_STATE_BC "")
-    set(INPUTGEN_GPU_RT_TEST_CALLBACKS_BC "")
     set(INPUTGEN_GPU_RT_TEST_RUNTIME_BC "")
-    get_property(INPUTGEN_GPU_RT_SOURCE_DIR GLOBAL PROPERTY
-                 INPUTGEN_GPU_RT_SOURCE_DIR)
-    if(INPUTGEN_GPU_RT_TEST_KEY)
-      get_property(INPUTGEN_GPU_RT_TEST_DIR GLOBAL PROPERTY
-                   INPUTGEN_GPU_RT_${INPUTGEN_GPU_RT_TEST_KEY}_DIR)
-      if(INPUTGEN_GPU_RT_TEST_DIR)
-        set(INPUTGEN_GPU_RT_AVAILABLE TRUE)
-        get_property(INPUTGEN_GPU_RT_TEST_COMPILER_TRIPLE GLOBAL PROPERTY
-                     INPUTGEN_GPU_RT_${INPUTGEN_GPU_RT_TEST_KEY}_TRIPLE)
-        set(INPUTGEN_GPU_RT_TEST_STATE_BC
-            ${INPUTGEN_GPU_RT_TEST_DIR}/inputgen_gpu_runtime_state.bc)
-        set(INPUTGEN_GPU_RT_TEST_CALLBACKS_BC
-            ${INPUTGEN_GPU_RT_TEST_DIR}/inputgen_gpu_runtime_callbacks.bc)
-        set(INPUTGEN_GPU_RT_TEST_RUNTIME_BC
-            ${INPUTGEN_GPU_RT_TEST_DIR}/inputgen_gpu_runtime.bc)
-      endif()
+    if(INPUTGEN_GPU_RT_TEST_COMPILER_TRIPLE)
+      # compiler-rt publishes the raw module in the target resource directory.
+      set(INPUTGEN_GPU_RT_TEST_RUNTIME_BC
+          ${RUNTIMES_OUTPUT_RESOURCE_DIR}/lib/${INPUTGEN_GPU_RT_TEST_COMPILER_TRIPLE}/libclang_rt.inputgen_gpu.bc)
+      set(INPUTGEN_GPU_RT_AVAILABLE TRUE)
     endif()
 
     add_offload_testsuite(check-libomptarget-${CURRENT_TARGET}
@@ -73,7 +56,6 @@ if(TARGET omptarget)
       ${CMAKE_CURRENT_BINARY_DIR}/${CURRENT_TARGET}
       DEPENDS omptarget ${OMP_DEPEND} ${LIBOMPTARGET_TESTED_PLUGINS}
               llvm-inputgen-gpu
-              ${INPUTGEN_GPU_RT_TEST_DEP}
       ARGS ${LIBOMPTARGET_LIT_ARG_LIST})
     list(APPEND LIBOMPTARGET_LIT_TESTSUITES ${CMAKE_CURRENT_BINARY_DIR}/${CURRENT_TARGET})
 

@@ -403,6 +403,19 @@ function(runtime_register_target name)
     list(APPEND ${name}_extra_targets ${component}-${name})
   endforeach()
 
+  # The inputgen-gpu component is published only by GPU compiler-rt builds.
+  # Add its outer target before the first nested configure so consumers can
+  # depend on the raw bitcode artifact without needing a second CMake run to
+  # discover Components.cmake.
+  if("compiler-rt" IN_LIST runtime_names AND
+     name MATCHES "^(amdgpu|amdgcn|nvptx)")
+    set(inputgen_gpu_component "inputgen-gpu-${name}")
+    if(NOT inputgen_gpu_component IN_LIST ${name}_extra_targets)
+      set(${inputgen_gpu_component} inputgen-gpu)
+      list(APPEND ${name}_extra_targets ${inputgen_gpu_component})
+    endif()
+  endif()
+
   foreach(target IN LISTS SUB_INSTALL_TARGETS)
     set(${target}-${name} ${target})
     set(${target}-${name}-stripped ${target}-stripped)
@@ -758,6 +771,23 @@ if(build_runtimes)
           BASE_NAME ${name}
           EXTRA_ARGS TARGET_TRIPLE ${name} ${extra_args})
       endforeach()
+    endforeach()
+
+    # Offload's InputGen tests consume the raw compiler-rt module with
+    # -inputgen-gpu-runtime-bitcode.  The offload project is configured in the
+    # host runtimes build, while each GPU compiler-rt component is configured
+    # in a sibling external build, so establish this ordering here.
+    foreach(name ${LLVM_RUNTIME_TARGETS})
+      if(name MATCHES "^(amdgpu|amdgcn|nvptx)")
+        set(inputgen_gpu_component "inputgen-gpu-${name}")
+        if(TARGET ${inputgen_gpu_component})
+          foreach(offload_target offload check-offload)
+            if(TARGET ${offload_target})
+              add_dependencies(${offload_target} ${inputgen_gpu_component})
+            endif()
+          endforeach()
+        endif()
+      endif()
     endforeach()
 
     # Generate a default multilib.yaml for each runtime target that has one.

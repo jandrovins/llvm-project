@@ -1,0 +1,10 @@
+@LIT_SITE_CFG_IN_HEADER@
+
+config.inputgen_gpu_lit_binary_dir = "@CMAKE_CURRENT_BINARY_DIR@"
+config.inputgen_gpu_src = "@COMPILER_RT_SOURCE_DIR@/lib/inputgen_gpu"
+config.inputgen_gpu_runtime_bc = "@INPUTGEN_GPU_RUNTIME_BC@"
+config.inputgen_gpu_runtime_available = @INPUTGEN_GPU_RUNTIME_AVAILABLE_PYBOOL@
+config.inputgen_gpu_host_test = @INPUTGEN_GPU_HOST_TEST_PYBOOL@
+
+lit_config.load_config(config, "@COMPILER_RT_BINARY_DIR@/test/lit.common.configured")
+lit_config.load_config(config, "@INPUTGEN_GPU_LIT_SOURCE_DIR@/lit.cfg.py")

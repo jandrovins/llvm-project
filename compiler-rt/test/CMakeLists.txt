@@ -59,7 +59,7 @@ umbrella_lit_testsuite_begin(check-compiler-rt)
 
 set(COMPILER_RT_KNOWN_TEST_SUITES
     builtins;ctx_profile;fuzzer;interception;lsan;memprof;metadata
-    ;orc;profile;sanitizer_common;shadowcallstack
+    ;inputgen_gpu;orc;profile;sanitizer_common;shadowcallstack
     ;ubsan;xray)
 list(APPEND COMPILER_RT_KNOWN_TEST_SUITES ${ALL_SANITIZERS})
 list(REMOVE_DUPLICATES COMPILER_RT_KNOWN_TEST_SUITES)
@@ -122,6 +122,10 @@ function(compiler_rt_test_runtime runtime)
     add_subdirectory(${runtime})
   endif()
 endfunction()
+
+# InputGen's host-only factory test does not require a device runtime build;
+# the raw-bitcode check is enabled only by a GPU compiler-rt configuration.
+compiler_rt_test_runtime(inputgen_gpu NO_COMPILER_RT_HAS_GUARD)
 
 # Run sanitizer tests only if we're sure that clang would produce
 # working binaries.

@@ -1,7 +1,7 @@
-// This test compiles a direct-entry AMDGPU image from PR 4's split runtime
-// bitcodes, then invokes the launcher in generate and replay modes.
+// This test compiles a direct-entry AMDGPU image from compiler-rt's linked
+// runtime bitcode, then invokes the launcher in generate and replay modes.
 // RUN: %clang --target=amdgcn-amd-amdhsa -mcpu=%inputgen-gpu-amdgpu-arch -nogpulib -nogpuinc -nostdlibinc -emit-llvm -c %s -o %t.bc
-// RUN: opt -passes=inputgen-gpu -inputgen-gpu-runtime-bitcode=%inputgen-gpu-state-bc -inputgen-gpu-runtime-bitcode=%inputgen-gpu-callbacks-bc -inputgen-gpu-entry-function=vvv_foo %t.bc -o %t.linked.bc
+// RUN: opt -passes=inputgen-gpu -inputgen-gpu-runtime-bitcode=%inputgen-gpu-runtime-bc -inputgen-gpu-entry-function=vvv_foo %t.bc -o %t.linked.bc
 // RUN: llc -mtriple=amdgcn-amd-amdhsa -mcpu=%inputgen-gpu-amdgpu-arch -filetype=obj %t.linked.bc -o %t.o
 // RUN: ld.lld -flavor gnu -shared %t.o -o %t.image
 // RUN: printf '{ "Name": "vvv_foo", "DeviceId": 0 }\n' > %t.json
