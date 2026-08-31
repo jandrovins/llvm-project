@@ -39,8 +39,17 @@ int main(void) {
   Pointer = *(void **)Slot;
   (void)__ig_pre_load(Pointer, 0, 8, 8, INPUTGEN_GPU_VALUE_POINTER);
   printf("capacity-error=%u\n", Slice->Error);
+
+  Header->Mode = INPUTGEN_MODE_GENERATE;
+  (void)__ig_prepare_lane(Factory, 0, 0, 8, 1);
+  int External = 7;
+  void *PassedThrough = __ig_pre_load(
+      &External, 0, 4, 4, INPUTGEN_GPU_VALUE_INTEGER);
+  printf("external-same=%d external-error=%u\n", PassedThrough == &External,
+         Slice->Error);
   return 0;
 }
 
 // CHECK: error=3 fallback=0
 // CHECK: capacity-error=2
+// CHECK: external-same=1 external-error=0

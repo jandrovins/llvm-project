@@ -45,10 +45,8 @@ decodePointer(void *Pointer, int32_t PointerAS, int64_t Size,
   if (!Slice || PointerAS != 0 || Size <= 0 || Size > 8)
     return 0;
   uint64_t Bits = (uint64_t)(uintptr_t)Pointer;
-  if (!isVirtualPointer(Pointer)) {
-    setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_ACCESS);
+  if (!isVirtualPointer(Pointer))
     return 0;
-  }
   uint32_t Index = (uint32_t)((Bits >> INPUTGEN_GPU_VPTR_OFFSET_BITS) &
                               INPUTGEN_GPU_VPTR_OBJECT_MASK);
   int64_t Offset = (int64_t)(Bits & (INPUTGEN_GPU_VPTR_OFFSET_BIAS * 2 - 1)) -
