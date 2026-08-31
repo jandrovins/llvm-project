@@ -14,7 +14,6 @@ if(COMPILER_RT_GPU_BUILD)
       break()
     endif()
   endforeach()
-  set(INPUTGEN_GPU_HOST_TEST FALSE)
 endif()
 
 pythonize_bool(INPUTGEN_GPU_RUNTIME_AVAILABLE)
