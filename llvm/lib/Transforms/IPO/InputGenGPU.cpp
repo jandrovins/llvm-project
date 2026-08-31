@@ -439,5 +439,8 @@ PreservedAnalyses InputGenGPUPass::run(Module &M, ModuleAnalysisManager &MAM) {
     return PreservedAnalyses::all();
 
   InputGenGPUConfig IConf(Info);
-  return InstrumentorPass(/*FS=*/nullptr, &IConf, &IIRB).run(M, MAM);
+  (void)InstrumentorPass(/*FS=*/nullptr, &IConf, &IIRB).run(M, MAM);
+  // Wrapper creation itself mutates the module even when no callback is
+  // inserted, so the Instrumentor's change result alone is insufficient.
+  return PreservedAnalyses::none();
 }

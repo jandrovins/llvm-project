@@ -193,7 +193,7 @@ public:
   }
 
 private:
-  void linkRuntime();
+  bool linkRuntime();
 
   /// Indicate if the module should be instrumented based on the target.
   bool shouldInstrumentTarget();
@@ -245,10 +245,12 @@ static Regex createRegex(StringRef Str, StringRef Name, LLVMContext &Ctx) {
   return Regex();
 }
 
-void InstrumentorImpl::linkRuntime() {
+bool InstrumentorImpl::linkRuntime() {
   ArrayRef<StringRef> RuntimeBitcodes = IConf.RuntimeBitcodes->getStringList();
   if (RuntimeBitcodes.empty())
-    return;
+    return false;
+
+  bool Changed = false;
 
   for (StringRef RuntimeBitcode : RuntimeBitcodes) {
     if (RuntimeBitcode.empty())
@@ -261,7 +263,7 @@ void InstrumentorImpl::linkRuntime() {
           Twine("Failed to parse runtime bitcode file '") + RuntimeBitcode +
               Twine("':\n") + M.getName(),
           DS_Error));
-      return;
+      return Changed;
     }
 
     if (Linker::linkModules(M, std::move(RTM))) {
@@ -269,12 +271,13 @@ void InstrumentorImpl::linkRuntime() {
           Twine("Failed to link in runtime bitcode file '") + RuntimeBitcode +
               "'",
           DS_Error));
-      return;
+      return Changed;
     }
+    Changed = true;
   }
 
   if (!IConf.InlineRuntimeEagerly->getBool())
-    return;
+    return Changed;
 
   for (auto [I, _] : IIRB.NewInsts) {
     auto *CI = dyn_cast<CallInst>(I);
@@ -306,6 +309,7 @@ void InstrumentorImpl::linkRuntime() {
     delete It.second;
   }
   IIRB.AllocaMap.clear();
+  return Changed;
 }
 
 bool InstrumentorImpl::shouldInstrumentTarget() {
@@ -538,7 +542,7 @@ bool InstrumentorImpl::instrument() {
 
   Changed |= IConf.instrumentBeforeRuntimeLink(M, IIRB);
 
-  linkRuntime();
+  Changed |= linkRuntime();
 
   return Changed;
 }
