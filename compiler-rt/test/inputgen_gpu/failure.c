@@ -32,7 +32,15 @@ int main(void) {
       (InputGenGPUFactorySliceHeader *)(Factory + ((sizeof(*Header) + 7) &
                                                    ~((uint64_t)7)));
   printf("error=%u fallback=%d\n", Slice->Error, *Fallback);
+
+  Header->Mode = INPUTGEN_MODE_GENERATE;
+  Arguments = __ig_prepare_lane(Factory, 0, 0, 8, 1);
+  Slot = __ig_pre_load(Arguments, 0, 8, 8, INPUTGEN_GPU_VALUE_POINTER);
+  Pointer = *(void **)Slot;
+  (void)__ig_pre_load(Pointer, 0, 8, 8, INPUTGEN_GPU_VALUE_POINTER);
+  printf("capacity-error=%u\n", Slice->Error);
   return 0;
 }
 
 // CHECK: error=3 fallback=0
+// CHECK: capacity-error=2

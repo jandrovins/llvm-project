@@ -111,9 +111,12 @@ void *__ig_pre_load(void *Pointer, int32_t PointerAS, int64_t ValueSize,
         findRelation(Slice, Owner, Offset);
     if (!Relation) {
       // Generation reserves the target object; replay requires its relation.
-      if (Slice->Mode != INPUTGEN_MODE_GENERATE ||
-          Slice->RelationCount == Slice->RelationLimit) {
+      if (Slice->Mode != INPUTGEN_MODE_GENERATE) {
         setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_REPLAY);
+        return failureAddress(Slice, Pointer);
+      }
+      if (Slice->RelationCount == Slice->RelationLimit) {
+        setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_CAPACITY);
         return failureAddress(Slice, Pointer);
       }
       uint32_t Target = Slice->ObjectCount;
