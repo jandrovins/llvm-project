@@ -48,7 +48,9 @@ if(TARGET omptarget)
       # compiler-rt publishes the raw module in the target resource directory.
       set(INPUTGEN_GPU_RT_TEST_RUNTIME_BC
           ${RUNTIMES_OUTPUT_RESOURCE_DIR}/lib/${INPUTGEN_GPU_RT_TEST_COMPILER_TRIPLE}/libclang_rt.inputgen_gpu.bc)
-      set(INPUTGEN_GPU_RT_AVAILABLE TRUE)
+      if(EXISTS "${INPUTGEN_GPU_RT_TEST_RUNTIME_BC}")
+        set(INPUTGEN_GPU_RT_AVAILABLE TRUE)
+      endif()
     endif()
 
     add_offload_testsuite(check-libomptarget-${CURRENT_TARGET}
