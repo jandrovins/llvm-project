@@ -1,8 +1,9 @@
-; Verify entry generation uses one opaque context and ordinary argument loads.
+; Verify NVPTX64 entry generation uses the same opaque context and argument
+; object model as AMDGPU, with NVVM block and thread IDs.
 ; RUN: opt < %s -passes=inputgen-gpu -inputgen-gpu-entry-function=vvv_foo -S | FileCheck %s
 
-target datalayout = "e-m:e-p:64:64-p1:64:64-p2:32:32-p3:32:32-p4:64:64-p5:32:32-p6:32:32-p7:160:256:256:32-p8:128:128:128:48-p9:192:256:256:32-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64-S32-A5-G1-ni:7:8:9"
-target triple = "amdgcn-amd-amdhsa"
+target datalayout = "e-p6:32:32-i64:64-i128:128-v16:16-v32:32-n16:32:64"
+target triple = "nvptx64-nvidia-cuda"
 
 define hidden i32 @vvv_foo(ptr noundef %a) {
 ; CHECK-LABEL: define hidden i32 @vvv_foo(
@@ -15,10 +16,10 @@ entry:
   ret i32 %v
 }
 
-; CHECK-LABEL: define amdgpu_kernel void @__ig_entry(
-; CHECK: [[WORKGROUP32:%.*]] = call i32 @llvm.amdgcn.workgroup.id.x()
+; CHECK-LABEL: define ptx_kernel void @__ig_entry(
+; CHECK: [[WORKGROUP32:%.*]] = call i32 @llvm.nvvm.read.ptx.sreg.ctaid.x()
 ; CHECK: [[WORKGROUP:%.*]] = zext i32 [[WORKGROUP32]] to i64
-; CHECK: [[WORKITEM32:%.*]] = call i32 @llvm.amdgcn.workitem.id.x()
+; CHECK: [[WORKITEM32:%.*]] = call i32 @llvm.nvvm.read.ptx.sreg.tid.x()
 ; CHECK: [[WORKITEM:%.*]] = zext i32 [[WORKITEM32]] to i64
 ; CHECK: [[ARGUMENTS:%.*]] = call ptr @__ig_prepare_lane(ptr %context, i64 [[WORKGROUP]], i64 [[WORKITEM]], i64 8, i32 1)
 ; CHECK: [[SLOT:%.*]] = getelementptr inbounds i8, ptr [[ARGUMENTS]], i64 0

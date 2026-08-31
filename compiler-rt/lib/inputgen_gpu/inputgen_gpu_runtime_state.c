@@ -2,9 +2,9 @@
 
 #include "inputgen_gpu_runtime_internal.h"
 
-// The AMDGPU backend cannot lower private-address-space globals. Keep the one
-// launch-wide context word in AS1 and derive each GPU thread's slice from its
-// hardware IDs. User-visible pointers remain encoded AS0 values.
+// Keep the launch-wide context word in AS1, a device-global address space on
+// the supported targets, and derive each GPU thread's slice from its hardware
+// IDs. User-visible pointers remain encoded AS0 values.
 static __attribute__((address_space(1))) uint64_t FactoryContextBits;
 
 static uint64_t alignTo(uint64_t Value, uint64_t Alignment);
@@ -21,6 +21,9 @@ static InputGenGPUFactorySliceHeader *currentSlice(void) {
 #if defined(__AMDGCN__)
   uint64_t WorkgroupIndex = __builtin_amdgcn_workgroup_id_x();
   uint64_t WorkitemIndex = __builtin_amdgcn_workitem_id_x();
+#elif defined(__NVPTX__)
+  uint64_t WorkgroupIndex = __nvvm_read_ptx_sreg_ctaid_x();
+  uint64_t WorkitemIndex = __nvvm_read_ptx_sreg_tid_x();
 #else
   uint64_t WorkgroupIndex = 0;
   uint64_t WorkitemIndex = 0;

@@ -96,11 +96,23 @@ bool createInputGenGPUEntryKernel(Module &M, InstrumentorIRBuilderTy &IIRB,
     return false;
   }
 
-  // The v1 factory runtime uses AMDGPU intrinsics and an AMDGPU kernel ABI.
+  // Select the target kernel ABI and X-dimension IDs used to find this GPU
+  // thread's factory slice.
   const Triple &T = M.getTargetTriple();
-  if (!T.isAMDGPU()) {
+  CallingConv::ID KernelCallingConv;
+  StringRef WorkgroupIdName;
+  StringRef WorkitemIdName;
+  if (T.isAMDGPU()) {
+    KernelCallingConv = CallingConv::AMDGPU_KERNEL;
+    WorkgroupIdName = "llvm.amdgcn.workgroup.id.x";
+    WorkitemIdName = "llvm.amdgcn.workitem.id.x";
+  } else if (T.isNVPTX()) {
+    KernelCallingConv = CallingConv::PTX_Kernel;
+    WorkgroupIdName = "llvm.nvvm.read.ptx.sreg.ctaid.x";
+    WorkitemIdName = "llvm.nvvm.read.ptx.sreg.tid.x";
+  } else {
     IIRB.Ctx.diagnose(DiagnosticInfoInstrumentation(
-        Twine("InputGen GPU objects currently require AMDGPU, not target '") +
+        Twine("InputGen GPU objects require AMDGPU or NVPTX, not target '") +
             T.str() + "'",
         DS_Warning));
     return false;
@@ -167,7 +179,7 @@ bool createInputGenGPUEntryKernel(Module &M, InstrumentorIRBuilderTy &IIRB,
       FunctionType::get(IIRB.VoidTy, {IIRB.PtrTy}, /*isVarArg=*/false);
   Function *EntryPoint = Function::Create(
       EntryPointTy, GlobalValue::ExternalLinkage, InputGenGPUEntryPointName, M);
-  EntryPoint->setCallingConv(CallingConv::AMDGPU_KERNEL);
+  EntryPoint->setCallingConv(KernelCallingConv);
   EntryPoint->addFnAttr("instrument");
 
   Argument *Context = &*EntryPoint->arg_begin();
@@ -180,14 +192,12 @@ bool createInputGenGPUEntryKernel(Module &M, InstrumentorIRBuilderTy &IIRB,
   // skips pass-created instructions, while scalar argument loads need hooks.
   IRBuilder<> IRB(EntryBB);
 
-  // Linearize the AMDGPU workgroup and workitem IDs into the unique factory
-  // slice index owned by this GPU thread.
+  // Linearize the target workgroup/block and workitem/thread IDs into the
+  // unique factory slice index owned by this GPU thread.
   FunctionCallee WorkgroupId = M.getOrInsertFunction(
-      "llvm.amdgcn.workgroup.id.x",
-      FunctionType::get(IIRB.Int32Ty, /*isVarArg=*/false));
+      WorkgroupIdName, FunctionType::get(IIRB.Int32Ty, /*isVarArg=*/false));
   FunctionCallee WorkitemId = M.getOrInsertFunction(
-      "llvm.amdgcn.workitem.id.x",
-      FunctionType::get(IIRB.Int32Ty, /*isVarArg=*/false));
+      WorkitemIdName, FunctionType::get(IIRB.Int32Ty, /*isVarArg=*/false));
   Value *Workgroup = IRB.CreateZExt(IRB.CreateCall(WorkgroupId), IIRB.Int64Ty);
   Value *Workitem = IRB.CreateZExt(IRB.CreateCall(WorkitemId), IIRB.Int64Ty);
 
