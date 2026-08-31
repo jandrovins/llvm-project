@@ -342,13 +342,9 @@ void registerDeviceImage(
 
 // Allocate the single driver-owned opaque factory context.
 Expected<DeviceAllocations> allocateInputGenBuffers(int32_t DeviceId,
-                                                    uint64_t FactorySize,
-                                                    uint32_t NumLanes) {
-  (void)NumLanes;
+                                                    uint64_t FactorySize) {
   void *Factory = omp_target_alloc(FactorySize, DeviceId);
   if (!Factory) {
-    if (Factory)
-      omp_target_free(Factory, DeviceId);
     return createErr("omp_target_alloc failed on device %" PRId32, DeviceId);
   }
   return DeviceAllocations(Factory, DeviceId);
@@ -702,8 +698,7 @@ Error applyReplayInvocation(InputGenInvocation &Invocation,
 
 // Copy initialized factory bytes to the device and clear every result slot.
 Error copyToDevice(DeviceAllocations &Allocs, ArrayRef<uint8_t> Factory,
-                   uint32_t NumLanes, int HostDevice) {
-  (void)NumLanes;
+                   int HostDevice) {
   if (omp_target_memcpy(Allocs.Factory, Factory.data(), Factory.size(), 0, 0,
                         Allocs.DeviceId, HostDevice) != 0)
     return createErr("failed to copy factory to device");
@@ -715,7 +710,6 @@ Error copyToDevice(DeviceAllocations &Allocs, ArrayRef<uint8_t> Factory,
 void buildKernelLaunchArguments(const InputGenInvocation &Invocation,
                                 DeviceAllocations &Allocs, uint64_t FactorySize,
                                 KernelLaunchArguments &Args) {
-  (void)Invocation;
   (void)FactorySize;
   Args.ArgBasePtrs[0] = &Allocs.Factory;
   Args.ArgPtrs[0] = &Allocs.Factory;
@@ -762,6 +756,8 @@ Error copyResults(const InputGenInvocation &Invocation,
       return createErr(
           "device GPU thread %u reported InputGen factory error %u", Lane,
           Slice->Error);
+    if (!Slice->ResultSize)
+      continue;
     outs() << (Invocation.Mode == InputGenMode::Generate ? "result"
                                                          : "replay result")
            << "[" << Lane << "] = " << Slice->ResultBits << "\n";
@@ -825,12 +821,12 @@ Error runInputGenGPU() {
 
   int HostDevice = omp_get_initial_device();
   Expected<DeviceAllocations> AllocsOrErr =
-      allocateInputGenBuffers(Invocation.DeviceId, *FactorySize, *NumLanes);
+      allocateInputGenBuffers(Invocation.DeviceId, *FactorySize);
   if (!AllocsOrErr)
     return AllocsOrErr.takeError();
   DeviceAllocations Allocs = std::move(*AllocsOrErr);
 
-  if (Error Err = copyToDevice(Allocs, HostFactory, *NumLanes, HostDevice))
+  if (Error Err = copyToDevice(Allocs, HostFactory, HostDevice))
     return std::move(Err);
   KernelLaunchArguments LaunchArgs;
   buildKernelLaunchArguments(Invocation, Allocs, *FactorySize, LaunchArgs);
