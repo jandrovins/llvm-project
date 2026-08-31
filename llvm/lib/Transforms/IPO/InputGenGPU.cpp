@@ -244,8 +244,19 @@ bool createInputGenGPUEntryKernel(Module &M, InstrumentorIRBuilderTy &IIRB,
       IRB.CreateCall(PrepareLane,
                      {Context, Workgroup, Workitem,
                       ConstantInt::get(IIRB.Int64Ty, ArgumentBytes),
-                      ConstantInt::get(IIRB.Int32Ty, PointerArgumentCount)},
+                     ConstantInt::get(IIRB.Int32Ty, PointerArgumentCount)},
                      "inputgen.arguments");
+
+  // A failed slice initialization has no valid argument object. Return before
+  // any wrapper load can dereference the null result; the device runtime keeps
+  // its per-GPU-thread error for the launcher to copy back.
+  BasicBlock *AbortBB = BasicBlock::Create(IIRB.Ctx, "inputgen.abort", EntryPoint);
+  BasicBlock *ContinueBB =
+      BasicBlock::Create(IIRB.Ctx, "inputgen.continue", EntryPoint);
+  IRB.CreateCondBr(IRB.CreateIsNull(ArgumentData), AbortBB, ContinueBB);
+  IRB.SetInsertPoint(AbortBB);
+  IRB.CreateRetVoid();
+  IRB.SetInsertPoint(ContinueBB);
 
   // Reconstruct every argument through ordinary loads from object zero.
   SmallVector<Value *> CallArguments;

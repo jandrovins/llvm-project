@@ -90,6 +90,9 @@ typedef struct InputGenGPUFactorySliceHeader {
   uint64_t RelationTableOffset;
   uint64_t NextOffset;
   uint64_t ResultBits;
+  // Aligned fallback storage returned after a callback error so the rewritten
+  // immediate access can complete and the launcher can report the error.
+  uint64_t ErrorScratch;
   uint32_t ResultSize;
   uint32_t ResultReserved;
 } InputGenGPUFactorySliceHeader;

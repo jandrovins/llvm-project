@@ -12,6 +12,18 @@ static void setError(InputGenGPUFactorySliceHeader *Slice, uint32_t Error) {
     Slice->Error = Error;
 }
 
+static int isVirtualPointer(void *Pointer) {
+  return ((uint64_t)(uintptr_t)Pointer >> 60) == INPUTGEN_GPU_VPTR_MAGIC;
+}
+
+static void *failureAddress(InputGenGPUFactorySliceHeader *Slice,
+                            void *OriginalPointer) {
+  // A replaced access must still receive a dereferenceable address after a
+  // recorded callback error. The slice header is naturally 8-byte aligned and
+  // all supported access sizes are at most eight bytes.
+  return Slice ? (void *)&Slice->ErrorScratch : OriginalPointer;
+}
+
 static uint64_t generatedBits(int32_t TypeId, int64_t Size, int *IsValid) {
   // Fabricate the deterministic scalar value used for unseen generated input.
   *IsValid = 1;
@@ -33,7 +45,7 @@ decodePointer(void *Pointer, int32_t PointerAS, int64_t Size,
   if (!Slice || PointerAS != 0 || Size <= 0 || Size > 8)
     return 0;
   uint64_t Bits = (uint64_t)(uintptr_t)Pointer;
-  if ((Bits >> 60) != INPUTGEN_GPU_VPTR_MAGIC) {
+  if (!isVirtualPointer(Pointer)) {
     setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_ACCESS);
     return 0;
   }
@@ -43,8 +55,10 @@ decodePointer(void *Pointer, int32_t PointerAS, int64_t Size,
                    (int64_t)INPUTGEN_GPU_VPTR_OFFSET_BIAS;
   InputGenGPUFactoryObjectHeader *Object = __ig_get_object(Index);
   if (!Object || Offset < 0 || (uint64_t)Offset > Object->Capacity ||
-      (uint64_t)Size > Object->Capacity - (uint64_t)Offset)
+      (uint64_t)Size > Object->Capacity - (uint64_t)Offset) {
+    setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_ACCESS);
     return 0;
+  }
   *ObjectIndex = Index;
   *OffsetOut = (uint32_t)Offset;
   return Object;
@@ -83,7 +97,7 @@ void *__ig_pre_load(void *Pointer, int32_t PointerAS, int64_t ValueSize,
   InputGenGPUFactoryObjectHeader *Object =
       decodePointer(Pointer, PointerAS, ValueSize, &Owner, &Offset);
   if (!Object)
-    return Pointer;
+    return isVirtualPointer(Pointer) ? failureAddress(Slice, Pointer) : Pointer;
 
   char *Data = (char *)(Object + 1);
   unsigned char *Mask = (unsigned char *)(Data + Object->Capacity);
@@ -91,7 +105,7 @@ void *__ig_pre_load(void *Pointer, int32_t PointerAS, int64_t ValueSize,
     // Pointer slots record object relationships, never a serialized address.
     if (ValueSize != 8) {
       setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_TYPE);
-      return Pointer;
+      return failureAddress(Slice, Pointer);
     }
     InputGenGPUFactoryPointerRelation *Relation =
         findRelation(Slice, Owner, Offset);
@@ -100,7 +114,7 @@ void *__ig_pre_load(void *Pointer, int32_t PointerAS, int64_t ValueSize,
       if (Slice->Mode != INPUTGEN_MODE_GENERATE ||
           Slice->RelationCount == Slice->RelationLimit) {
         setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_REPLAY);
-        return Pointer;
+        return failureAddress(Slice, Pointer);
       }
       uint32_t Target = Slice->ObjectCount;
       if (!__ig_allocate_object(Target))
@@ -112,7 +126,7 @@ void *__ig_pre_load(void *Pointer, int32_t PointerAS, int64_t ValueSize,
       Relation->TargetOffset = 0;
     }
     if (!__ig_get_object(Relation->TargetObject))
-      return Pointer;
+      return failureAddress(Slice, Pointer);
     *(void **)(Data + Offset) =
         encodePointer(Relation->TargetObject, Relation->TargetOffset);
     for (uint32_t I = 0; I < (uint32_t)ValueSize; ++I)
@@ -124,7 +138,7 @@ void *__ig_pre_load(void *Pointer, int32_t PointerAS, int64_t ValueSize,
   uint64_t Bits = generatedBits(ValueTypeId, ValueSize, &IsValid);
   if (!IsValid) {
     setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_TYPE);
-    return Pointer;
+    return failureAddress(Slice, Pointer);
   }
   for (uint32_t I = 0; I < (uint32_t)ValueSize; ++I) {
     unsigned char State = Mask[Offset + I];
@@ -132,7 +146,7 @@ void *__ig_pre_load(void *Pointer, int32_t PointerAS, int64_t ValueSize,
       continue;
     if (Slice->Mode == INPUTGEN_MODE_REPLAY) {
       setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_REPLAY);
-      return Pointer;
+      return failureAddress(Slice, Pointer);
     }
     // First reads become input; a prior write supplies the current value.
     Data[Offset + I] = (char)(Bits >> (I * 8));
@@ -149,7 +163,9 @@ void *__ig_pre_store(void *Pointer, int32_t PointerAS, int64_t ValueSize,
   InputGenGPUFactoryObjectHeader *Object =
       decodePointer(Pointer, PointerAS, ValueSize, &Owner, &Offset);
   if (!Object)
-    return Pointer;
+    return isVirtualPointer(Pointer) ? failureAddress(__ig_current_slice(),
+                                                       Pointer)
+                                     : Pointer;
   char *Data = (char *)(Object + 1);
   unsigned char *Mask = (unsigned char *)(Data + Object->Capacity);
   char *Saved = (char *)(Mask + Object->Capacity);
