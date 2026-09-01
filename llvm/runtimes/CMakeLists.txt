@@ -23,6 +23,40 @@ foreach(proj ${LLVM_ENABLE_RUNTIMES})
     "-DLLVM_EXTERNAL_${canon_name}_SOURCE_DIR=${LLVM_EXTERNAL_${canon_name}_SOURCE_DIR}")
 endforeach()
 
+# Runtime projects may publish components before their nested CMake configure
+# writes Components.cmake.  This lets sibling runtimes depend on artifacts
+# produced by a target-specific runtime during the first build-tree configure.
+function(runtime_register_early_component)
+  cmake_parse_arguments(ARG "" "NAME;PROJECT;TARGET_PATTERN" "DEPENDENTS" ${ARGN})
+  if(NOT ARG_NAME OR NOT ARG_PROJECT OR NOT ARG_TARGET_PATTERN)
+    message(FATAL_ERROR
+      "runtime_register_early_component requires NAME, PROJECT, and TARGET_PATTERN")
+  endif()
+  set_property(GLOBAL APPEND PROPERTY LLVM_EARLY_RUNTIME_COMPONENTS
+               ${ARG_NAME})
+  set_property(GLOBAL PROPERTY LLVM_EARLY_RUNTIME_COMPONENT_${ARG_NAME}_PROJECT
+               ${ARG_PROJECT})
+  set_property(GLOBAL PROPERTY LLVM_EARLY_RUNTIME_COMPONENT_${ARG_NAME}_TARGET_PATTERN
+               ${ARG_TARGET_PATTERN})
+  set_property(GLOBAL PROPERTY LLVM_EARLY_RUNTIME_COMPONENT_${ARG_NAME}_DEPENDENTS
+               "${ARG_DEPENDENTS}")
+endfunction()
+
+function(get_early_runtime_components target runtime_names output)
+  get_property(components GLOBAL PROPERTY LLVM_EARLY_RUNTIME_COMPONENTS)
+  foreach(component IN LISTS components)
+    get_property(project GLOBAL
+      PROPERTY LLVM_EARLY_RUNTIME_COMPONENT_${component}_PROJECT)
+    get_property(target_pattern GLOBAL
+      PROPERTY LLVM_EARLY_RUNTIME_COMPONENT_${component}_TARGET_PATTERN)
+    if(project IN_LIST runtime_names AND "${target}" MATCHES "${target_pattern}")
+      list(APPEND result ${component})
+    endif()
+  endforeach()
+  list(REMOVE_DUPLICATES result)
+  set(${output} ${result} PARENT_SCOPE)
+endfunction()
+
 function(get_compiler_rt_path path)
   set(all_runtimes ${runtimes})
   foreach(name ${LLVM_RUNTIME_TARGETS})
@@ -192,6 +226,7 @@ endfunction()
 # before the just-built compiler can pass the configuration tests.
 get_compiler_rt_path(compiler_rt_path)
 if(compiler_rt_path)
+  include(${compiler_rt_path}/RuntimeComponents.cmake OPTIONAL)
   # If the user did not specify the targets infer them from the runtimes.
   set(builtin_targets ${LLVM_BUILTIN_TARGETS})
   if(NOT builtin_targets)
@@ -290,6 +325,12 @@ function(runtime_default_target)
       install-${runtime_name}-stripped)
     if(LLVM_INCLUDE_TESTS)
       list(APPEND test_targets check-${runtime_name})
+    endif()
+  endforeach()
+  get_early_runtime_components(default "${RUNTIME_NAMES}" early_components)
+  foreach(component IN LISTS early_components)
+    if(NOT component IN_LIST extra_targets)
+      list(APPEND extra_targets ${component})
     endif()
   endforeach()
   foreach(component ${LLVM_RUNTIME_DISTRIBUTION_COMPONENTS})
@@ -403,18 +444,14 @@ function(runtime_register_target name)
     list(APPEND ${name}_extra_targets ${component}-${name})
   endforeach()
 
-  # The inputgen-gpu component is published only by GPU compiler-rt builds.
-  # Add its outer target before the first nested configure so consumers can
-  # depend on the raw bitcode artifact without needing a second CMake run to
-  # discover Components.cmake.
-  if("compiler-rt" IN_LIST runtime_names AND
-     name MATCHES "^(amdgpu|amdgcn|nvptx)")
-    set(inputgen_gpu_component "inputgen-gpu-${name}")
-    if(NOT inputgen_gpu_component IN_LIST ${name}_extra_targets)
-      set(${inputgen_gpu_component} inputgen-gpu)
-      list(APPEND ${name}_extra_targets ${inputgen_gpu_component})
+  get_early_runtime_components(${name} "${runtime_names}" early_components)
+  foreach(component IN LISTS early_components)
+    set(component_target "${component}-${name}")
+    if(NOT component_target IN_LIST ${name}_extra_targets)
+      set(${component_target} ${component})
+      list(APPEND ${name}_extra_targets ${component_target})
     endif()
-  endif()
+  endforeach()
 
   foreach(target IN LISTS SUB_INSTALL_TARGETS)
     set(${target}-${name} ${target})
@@ -773,21 +810,25 @@ if(build_runtimes)
       endforeach()
     endforeach()
 
-    # Offload's InputGen tests consume the raw compiler-rt module with
-    # -inputgen-gpu-runtime-bitcode.  The offload project is configured in the
-    # host runtimes build, while each GPU compiler-rt component is configured
-    # in a sibling external build, so establish this ordering here.
-    foreach(name ${LLVM_RUNTIME_TARGETS})
-      if(name MATCHES "^(amdgpu|amdgcn|nvptx)")
-        set(inputgen_gpu_component "inputgen-gpu-${name}")
-        if(TARGET ${inputgen_gpu_component})
-          foreach(offload_target offload check-offload)
-            if(TARGET ${offload_target})
-              add_dependencies(${offload_target} ${inputgen_gpu_component})
+    # Apply cross-runtime build ordering declared by source-side manifests.
+    get_property(early_components GLOBAL PROPERTY LLVM_EARLY_RUNTIME_COMPONENTS)
+    foreach(component IN LISTS early_components)
+      get_property(dependents GLOBAL
+        PROPERTY LLVM_EARLY_RUNTIME_COMPONENT_${component}_DEPENDENTS)
+      foreach(name IN ITEMS default ${LLVM_RUNTIME_TARGETS})
+        if(name STREQUAL default)
+          set(component_target ${component})
+        else()
+          set(component_target "${component}-${name}")
+        endif()
+        if(TARGET ${component_target})
+          foreach(dependent IN LISTS dependents)
+            if(TARGET ${dependent})
+              add_dependencies(${dependent} ${component_target})
             endif()
           endforeach()
         endif()
-      endif()
+      endforeach()
     endforeach()
 
     # Generate a default multilib.yaml for each runtime target that has one.

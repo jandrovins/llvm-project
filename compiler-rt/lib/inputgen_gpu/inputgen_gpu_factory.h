@@ -1,4 +1,4 @@
-//===-- inputgen_gpu_factory.h - Private GPU InputGen factory ABI ---------===//
+//===-- inputgen_gpu_factory.h - Shared GPU InputGen factory ABI ----------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,9 +6,10 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This header is intentionally private to the InputGen GPU launcher and the
-// device runtime. It defines the in-memory factory and on-disk input layouts;
-// LLVM IR generation uses opaque runtime calls and must not depend on them.
+// This compiler-rt-private header is shared by the device runtime and the host
+// codec.  It defines the in-memory factory and on-disk input layouts.  The
+// launcher uses only the public C++ codec API, and LLVM IR generation uses
+// opaque runtime calls; neither depends directly on these representations.
 //
 //===----------------------------------------------------------------------===//
 

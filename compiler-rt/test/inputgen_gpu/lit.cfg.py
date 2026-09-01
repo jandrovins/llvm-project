@@ -4,12 +4,14 @@ import lit.formats
 
 config.name = "InputGenGPU"
 config.test_format = lit.formats.ShTest()
-config.suffixes = [".c"]
+config.suffixes = [".c", ".cpp"]
 config.test_source_root = os.path.dirname(__file__)
 config.test_exec_root = os.path.join(config.inputgen_gpu_lit_binary_dir, "Output")
 config.substitutions.append(("%inputgen-gpu-src", config.inputgen_gpu_src))
 config.substitutions.append(("%inputgen-gpu-runtime-bc", config.inputgen_gpu_runtime_bc))
 config.substitutions.append(("%inputgen-gpu-cc", config.clang))
+config.substitutions.append(("%inputgen-gpu-cxx", config.clang + " --driver-mode=g++"))
+config.substitutions.append(("%inputgen-gpu-include", config.inputgen_gpu_include))
 
 if config.inputgen_gpu_runtime_available:
     config.available_features.add("inputgen-gpu-runtime")

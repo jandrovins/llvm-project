@@ -1,12 +1,33 @@
-# Build the device-only InputGen runtime as a normal compiler-rt component.
-# The instrumentation pass consumes the linked bitcode module, while the
-# archive keeps the sources available to regular compiler-rt build machinery.
+add_compiler_rt_component(inputgen-gpu)
 
+# The host codec owns the factory and input-file protocols.  It is a regular
+# C++17 library and must never inherit the freestanding GPU runtime flags.
 if(NOT COMPILER_RT_GPU_BUILD)
+  add_library(inputgen_gpu_host STATIC
+    host/InputGenGPUCodec.cpp)
+  target_compile_features(inputgen_gpu_host PUBLIC cxx_std_17)
+  target_include_directories(inputgen_gpu_host
+    PUBLIC
+      $<BUILD_INTERFACE:${COMPILER_RT_SOURCE_DIR}/include>
+      $<INSTALL_INTERFACE:include>)
+  set_target_properties(inputgen_gpu_host PROPERTIES
+    FOLDER "compiler-rt/Libraries"
+    POSITION_INDEPENDENT_CODE ON)
+  add_dependencies(inputgen-gpu inputgen_gpu_host)
+
+  install(TARGETS inputgen_gpu_host
+    ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX}
+    COMPONENT inputgen-gpu)
+  install(FILES
+      ${COMPILER_RT_SOURCE_DIR}/include/inputgen_gpu/InputGenGPUCodec.h
+    DESTINATION include/inputgen_gpu
+    COMPONENT inputgen-gpu)
   return()
 endif()
 
-add_compiler_rt_component(inputgen-gpu)
+# Build the device-only runtime for GPU compiler-rt configurations.  The
+# instrumentation pass consumes the linked bitcode module, while the archive
+# keeps the sources available to regular compiler-rt build machinery.
 
 set(INPUTGEN_GPU_SOURCES
   inputgen_gpu_runtime_state.c

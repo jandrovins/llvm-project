@@ -1,0 +1,606 @@
+//===-- InputGenGPUCodec.cpp - InputGen GPU host codec --------------------===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "inputgen_gpu/InputGenGPUCodec.h"
+
+#include "../inputgen_gpu_factory.h"
+
+#include <algorithm>
+#include <cstdio>
+#include <cstring>
+#include <limits>
+#include <utility>
+
+namespace inputgen_gpu {
+namespace {
+
+constexpr uint64_t ResultStride = 8;
+constexpr uint64_t FactoryHeaderBytes =
+    (sizeof(InputGenGPUFactoryHeader) + 7) & ~uint64_t(7);
+
+struct InputRun {
+  uint32_t Offset = 0;
+  std::vector<uint8_t> Bytes;
+};
+
+struct InputObject {
+  uint32_t Capacity = 0;
+  std::vector<InputRun> Runs;
+};
+
+struct InputThread {
+  std::vector<InputObject> Objects;
+  std::vector<InputGenGPUInputFileRelation> Relations;
+};
+
+template <typename... Args>
+Error makeError(const char *Format, Args... Values) {
+  int Size = std::snprintf(nullptr, 0, Format, Values...);
+  if (Size < 0)
+    return Error("failed to format InputGen GPU codec error");
+  std::string Message(static_cast<size_t>(Size), '\0');
+  std::snprintf(Message.data(), Message.size() + 1, Format, Values...);
+  return Error(std::move(Message));
+}
+
+template <typename T> Error writeValue(FILE *File, const T &Value) {
+  if (std::fwrite(&Value, sizeof(Value), 1, File) != 1)
+    return Error("failed to write InputGen data");
+  return Error();
+}
+
+template <typename T> Error readValue(FILE *File, T &Value) {
+  if (std::fread(&Value, sizeof(Value), 1, File) != 1)
+    return Error("failed to read InputGen data");
+  return Error();
+}
+
+uint64_t alignTo(uint64_t Value, uint64_t Alignment) {
+  return (Value + Alignment - 1) & ~(Alignment - 1);
+}
+
+Result<uint32_t> getNumThreads(uint32_t NumTeams, uint32_t NumThreads) {
+  if (!NumTeams || !NumThreads ||
+      NumTeams > std::numeric_limits<uint32_t>::max() / NumThreads)
+    return Error("invalid launch geometry");
+  return NumTeams * NumThreads;
+}
+
+Result<uint64_t> getFactorySize(uint32_t NumThreads, uint64_t SliceBytes) {
+  if (!SliceBytes ||
+      NumThreads > (std::numeric_limits<uint64_t>::max() - FactoryHeaderBytes) /
+                       SliceBytes)
+    return Error("factory allocation size overflows");
+  return FactoryHeaderBytes + uint64_t(NumThreads) * SliceBytes;
+}
+
+Error validateConfig(const FactoryConfig &Config) {
+  if (Config.ExecutionMode != Mode::Generate &&
+      Config.ExecutionMode != Mode::Replay)
+    return Error("invalid InputGen execution mode");
+  Result<uint32_t> Threads = getNumThreads(Config.NumTeams, Config.NumThreads);
+  if (!Threads)
+    return Threads.error();
+  if (!Config.SliceBytes || Config.SliceBytes % 8 ||
+      Config.SliceBytes < sizeof(InputGenGPUFactorySliceHeader) ||
+      Config.SliceBytes > std::numeric_limits<uint32_t>::max())
+    return makeError("factory bytes per GPU thread must be an 8-byte-aligned "
+                     "value between %zu and %u",
+                     sizeof(InputGenGPUFactorySliceHeader),
+                     std::numeric_limits<uint32_t>::max());
+  if (!Config.ObjectBytes ||
+      Config.ObjectBytes > std::numeric_limits<uint32_t>::max())
+    return makeError("object bytes must be a nonzero value no greater than %u",
+                     std::numeric_limits<uint32_t>::max());
+  if (!Config.ConfigObjectsPerThread)
+    return Error("configured objects per GPU thread must be nonzero");
+  uint64_t MinimumTableBytes =
+      alignTo(sizeof(InputGenGPUFactorySliceHeader), 8) +
+      uint64_t(Config.ConfigObjectsPerThread) * sizeof(uint64_t) +
+      uint64_t(Config.ConfigObjectsPerThread - 1) *
+          sizeof(InputGenGPUFactoryPointerRelation);
+  if (MinimumTableBytes > Config.SliceBytes)
+    return Error("configured object tables do not fit in each GPU thread's "
+                 "factory slice");
+  return Error();
+}
+
+Error validateThreadLayout(const InputThread &Thread, uint64_t SliceBytes,
+                           uint32_t ObjectLimit, uint32_t RelationLimit) {
+  if (Thread.Objects.empty() || Thread.Objects.size() > ObjectLimit ||
+      Thread.Relations.size() > RelationLimit ||
+      Thread.Relations.size() + 1 != Thread.Objects.size() ||
+      RelationLimit + 1 != ObjectLimit)
+    return Error("invalid InputGen object relationship layout");
+
+  for (const InputGenGPUInputFileRelation &Relation : Thread.Relations) {
+    if (Relation.OwnerObject >= Thread.Objects.size() ||
+        Relation.TargetObject >= Thread.Objects.size() ||
+        Relation.SlotOffset > Thread.Objects[Relation.OwnerObject].Capacity ||
+        sizeof(uint64_t) > Thread.Objects[Relation.OwnerObject].Capacity -
+                               Relation.SlotOffset ||
+        Relation.TargetOffset > Thread.Objects[Relation.TargetObject].Capacity)
+      return Error("invalid InputGen pointer relationship");
+  }
+
+  uint64_t LayoutBytes =
+      alignTo(sizeof(InputGenGPUFactorySliceHeader), 8) +
+      uint64_t(ObjectLimit) * sizeof(uint64_t) +
+      uint64_t(RelationLimit) * sizeof(InputGenGPUFactoryPointerRelation);
+  return LayoutBytes <= SliceBytes
+             ? Error()
+             : Error("InputGen tables do not fit in slice");
+}
+
+FactoryConfig configFromHeader(const InputGenGPUInputFileHeader &Header,
+                               Mode ExecutionMode) {
+  return FactoryConfig{ExecutionMode,      Header.NumTeams,
+                       Header.NumThreads,  Header.SliceBytes,
+                       Header.ObjectBytes, Header.ConfigObjectsPerThread};
+}
+
+void initializeFactoryHeader(std::vector<uint8_t> &Bytes,
+                             const FactoryConfig &Config) {
+  auto *Header = reinterpret_cast<InputGenGPUFactoryHeader *>(Bytes.data());
+  Header->Magic = INPUTGEN_GPU_FACTORY_SLICE_MAGIC;
+  Header->Version = INPUTGEN_GPU_FACTORY_VERSION;
+  Header->Mode = static_cast<uint32_t>(Config.ExecutionMode);
+  Header->NumTeams = Config.NumTeams;
+  Header->ThreadsPerTeam = Config.NumThreads;
+  Header->NumLanes = Config.NumTeams * Config.NumThreads;
+  Header->ConfigObjectsPerThread = Config.ConfigObjectsPerThread;
+  Header->SliceBytes = Config.SliceBytes;
+  Header->ObjectBytes = Config.ObjectBytes;
+  Header->FactoryBytes = Bytes.size();
+}
+
+} // namespace
+
+struct Record::Impl {
+  InputGenGPUInputFileHeader Header{};
+  std::vector<InputThread> Threads;
+};
+
+struct CodecAccess {
+  static Record makeRecord(std::unique_ptr<Record::Impl> Storage) {
+    return Record(std::move(Storage));
+  }
+
+  static Record::Impl &record(Record &Value) { return *Value.Storage; }
+  static const Record::Impl &record(const Record &Value) {
+    return *Value.Storage;
+  }
+
+  static Factory makeFactory(FactoryConfig Config, std::vector<uint8_t> Bytes) {
+    return Factory(Config, std::move(Bytes));
+  }
+
+  static std::vector<uint8_t> &bytes(Factory &Value) { return Value.Bytes; }
+  static const std::vector<uint8_t> &bytes(const Factory &Value) {
+    return Value.Bytes;
+  }
+};
+
+Record::Record(std::unique_ptr<Impl> Storage) : Storage(std::move(Storage)) {}
+Record::Record(Record &&) noexcept = default;
+Record &Record::operator=(Record &&) noexcept = default;
+Record::~Record() = default;
+
+FactoryConfig Record::config() const {
+  return configFromHeader(Storage->Header, Mode::Replay);
+}
+
+Result<Factory> createGenerationFactory(const FactoryConfig &RequestedConfig) {
+  FactoryConfig Config = RequestedConfig;
+  Config.ExecutionMode = Mode::Generate;
+  if (Error Failure = validateConfig(Config))
+    return Failure;
+  Result<uint32_t> Threads = getNumThreads(Config.NumTeams, Config.NumThreads);
+  Result<uint64_t> Size = getFactorySize(Threads.value(), Config.SliceBytes);
+  if (!Size)
+    return Size.error();
+  std::vector<uint8_t> Bytes(Size.value(), 0);
+  initializeFactoryHeader(Bytes, Config);
+  return CodecAccess::makeFactory(Config, std::move(Bytes));
+}
+
+Error writeRecord(const std::string &Filename, const Record &Value) {
+  FILE *File = std::fopen(Filename.c_str(), "wb");
+  if (!File)
+    return makeError("failed to open generated data file '%s'",
+                     Filename.c_str());
+
+  const Record::Impl &Storage = CodecAccess::record(Value);
+  Error Failure = writeValue(File, Storage.Header);
+  for (const InputThread &Thread : Storage.Threads) {
+    InputGenGPUInputFileLaneHeader ThreadHeader{
+        static_cast<uint32_t>(Thread.Objects.size()),
+        static_cast<uint32_t>(Thread.Relations.size())};
+    if (!Failure)
+      Failure = writeValue(File, ThreadHeader);
+    for (const InputObject &Object : Thread.Objects) {
+      InputGenGPUInputFileObjectHeader ObjectHeader{
+          Object.Capacity, static_cast<uint32_t>(Object.Runs.size())};
+      if (!Failure)
+        Failure = writeValue(File, ObjectHeader);
+      for (const InputRun &Run : Object.Runs) {
+        InputGenGPUInputFileRunHeader RunHeader{
+            Run.Offset, static_cast<uint32_t>(Run.Bytes.size())};
+        if (!Failure)
+          Failure = writeValue(File, RunHeader);
+        if (!Failure && !Run.Bytes.empty() &&
+            std::fwrite(Run.Bytes.data(), 1, Run.Bytes.size(), File) !=
+                Run.Bytes.size())
+          Failure = Error("failed to write InputGen data");
+      }
+    }
+    for (const InputGenGPUInputFileRelation &Relation : Thread.Relations)
+      if (!Failure)
+        Failure = writeValue(File, Relation);
+  }
+  if (std::fclose(File) != 0 && !Failure)
+    Failure = Error("failed to close generated InputGen data");
+  return Failure;
+}
+
+Result<Record> readRecord(const std::string &Filename) {
+  FILE *File = std::fopen(Filename.c_str(), "rb");
+  if (!File)
+    return makeError("failed to open replay data file '%s'", Filename.c_str());
+
+  auto Storage = std::make_unique<Record::Impl>();
+  Error Failure = readValue(File, Storage->Header);
+  if (!Failure && (Storage->Header.Magic != INPUTGEN_GPU_INPUT_MAGIC ||
+                   Storage->Header.Version != INPUTGEN_GPU_FACTORY_VERSION))
+    Failure =
+        makeError("unsupported InputGen data file '%s'", Filename.c_str());
+  if (!Failure) {
+    Result<uint32_t> Threads =
+        getNumThreads(Storage->Header.NumTeams, Storage->Header.NumThreads);
+    if (!Threads || Threads.value() != Storage->Header.NumLanes ||
+        !Storage->Header.SliceBytes || !Storage->Header.ObjectBytes ||
+        !Storage->Header.ConfigObjectsPerThread ||
+        Storage->Header.ObjectLimit < Storage->Header.ConfigObjectsPerThread ||
+        Storage->Header.RelationLimit + 1 != Storage->Header.ObjectLimit ||
+        Storage->Header.ResultStride != ResultStride)
+      Failure = makeError("invalid InputGen data file '%s'", Filename.c_str());
+  }
+
+  if (!Failure)
+    Storage->Threads.resize(Storage->Header.NumLanes);
+  for (InputThread &Thread : Storage->Threads) {
+    InputGenGPUInputFileLaneHeader ThreadHeader{};
+    if (!Failure)
+      Failure = readValue(File, ThreadHeader);
+    if (!Failure && !ThreadHeader.ObjectCount)
+      Failure = makeError("invalid InputGen data file '%s'", Filename.c_str());
+    if (!Failure) {
+      Thread.Objects.resize(ThreadHeader.ObjectCount);
+      Thread.Relations.resize(ThreadHeader.RelationCount);
+    }
+    for (size_t ObjectIndex = 0; ObjectIndex < Thread.Objects.size();
+         ++ObjectIndex) {
+      InputObject &Object = Thread.Objects[ObjectIndex];
+      InputGenGPUInputFileObjectHeader ObjectHeader{};
+      if (!Failure)
+        Failure = readValue(File, ObjectHeader);
+      if (!Failure && !ObjectHeader.Capacity && ObjectIndex != 0)
+        Failure =
+            makeError("invalid InputGen data file '%s'", Filename.c_str());
+      if (!Failure) {
+        Object.Capacity = ObjectHeader.Capacity;
+        Object.Runs.resize(ObjectHeader.NumRuns);
+      }
+      uint32_t PreviousEnd = 0;
+      for (InputRun &Run : Object.Runs) {
+        InputGenGPUInputFileRunHeader RunHeader{};
+        if (!Failure)
+          Failure = readValue(File, RunHeader);
+        if (!Failure && (RunHeader.Offset > Object.Capacity ||
+                         RunHeader.Size > Object.Capacity - RunHeader.Offset ||
+                         RunHeader.Offset < PreviousEnd))
+          Failure =
+              makeError("invalid InputGen data file '%s'", Filename.c_str());
+        if (!Failure) {
+          Run.Offset = RunHeader.Offset;
+          Run.Bytes.resize(RunHeader.Size);
+          if (RunHeader.Size && std::fread(Run.Bytes.data(), 1, RunHeader.Size,
+                                           File) != RunHeader.Size)
+            Failure = Error("failed to read InputGen data");
+          PreviousEnd = RunHeader.Offset + RunHeader.Size;
+        }
+      }
+    }
+    for (InputGenGPUInputFileRelation &Relation : Thread.Relations)
+      if (!Failure)
+        Failure = readValue(File, Relation);
+    if (!Failure)
+      Failure = validateThreadLayout(Thread, Storage->Header.SliceBytes,
+                                     Storage->Header.ObjectLimit,
+                                     Storage->Header.RelationLimit);
+  }
+  if (!Failure && std::fgetc(File) != EOF)
+    Failure = makeError("invalid trailing data in InputGen data file '%s'",
+                        Filename.c_str());
+  std::fclose(File);
+  if (Failure)
+    return Failure;
+  return CodecAccess::makeRecord(std::move(Storage));
+}
+
+Result<Record> serializeFactory(const Factory &Value) {
+  const FactoryConfig &Config = Value.config();
+  if (Config.ExecutionMode != Mode::Generate)
+    return Error("only a generation factory can be serialized");
+  if (Error Failure = validateConfig(Config))
+    return Failure;
+
+  Result<uint32_t> NumThreads =
+      getNumThreads(Config.NumTeams, Config.NumThreads);
+  if (!NumThreads)
+    return NumThreads.error();
+  const std::vector<uint8_t> &Bytes = CodecAccess::bytes(Value);
+  auto Storage = std::make_unique<Record::Impl>();
+  Storage->Header = {INPUTGEN_GPU_INPUT_MAGIC,
+                     INPUTGEN_GPU_FACTORY_VERSION,
+                     Config.NumTeams,
+                     Config.NumThreads,
+                     NumThreads.value(),
+                     Config.ConfigObjectsPerThread,
+                     0,
+                     0,
+                     Config.SliceBytes,
+                     Config.ObjectBytes,
+                     ResultStride};
+  Storage->Threads.resize(NumThreads.value());
+
+  for (uint32_t ThreadIndex = 0; ThreadIndex < NumThreads.value();
+       ++ThreadIndex) {
+    uint64_t SliceOffset =
+        FactoryHeaderBytes + uint64_t(ThreadIndex) * Config.SliceBytes;
+    if (SliceOffset + sizeof(InputGenGPUFactorySliceHeader) > Bytes.size())
+      return Error("factory copy is truncated");
+    auto *Slice = reinterpret_cast<const InputGenGPUFactorySliceHeader *>(
+        Bytes.data() + SliceOffset);
+    if (Slice->Magic != INPUTGEN_GPU_FACTORY_SLICE_MAGIC)
+      return makeError("device GPU thread %u has invalid factory magic",
+                       ThreadIndex);
+    if (Slice->Version != INPUTGEN_GPU_FACTORY_VERSION)
+      return makeError("device GPU thread %u has factory version %u",
+                       ThreadIndex, Slice->Version);
+    if (Slice->Error)
+      return makeError("device GPU thread %u reported InputGen factory error "
+                       "%u",
+                       ThreadIndex, Slice->Error);
+    if (Slice->SliceIndex != ThreadIndex)
+      return makeError("device GPU thread %u reported slice index %u",
+                       ThreadIndex, Slice->SliceIndex);
+    if (!Slice->ObjectCount)
+      return makeError("device GPU thread %u created no argument object",
+                       ThreadIndex);
+    if (Slice->ObjectCount > Slice->ObjectLimit)
+      return makeError("device GPU thread %u created %u of %u objects",
+                       ThreadIndex, Slice->ObjectCount, Slice->ObjectLimit);
+    if (Slice->RelationCount + 1 != Slice->ObjectCount ||
+        Slice->RelationCount > Slice->RelationLimit ||
+        Slice->RelationLimit + 1 != Slice->ObjectLimit)
+      return makeError("device GPU thread %u has inconsistent pointer "
+                       "relations",
+                       ThreadIndex);
+    if (Slice->ObjectLimit < Config.ConfigObjectsPerThread)
+      return makeError("device GPU thread %u has invalid object capacity",
+                       ThreadIndex);
+    if (ThreadIndex == 0) {
+      Storage->Header.ObjectLimit = Slice->ObjectLimit;
+      Storage->Header.RelationLimit = Slice->RelationLimit;
+    } else if (Slice->ObjectLimit != Storage->Header.ObjectLimit ||
+               Slice->RelationLimit != Storage->Header.RelationLimit) {
+      return makeError("device GPU thread %u has inconsistent capacity",
+                       ThreadIndex);
+    }
+
+    InputThread &Thread = Storage->Threads[ThreadIndex];
+    Thread.Objects.reserve(Slice->ObjectCount);
+    for (uint32_t ObjectIndex = 0; ObjectIndex < Slice->ObjectCount;
+         ++ObjectIndex) {
+      uint64_t TableOffset =
+          Slice->ObjectTableOffset + uint64_t(ObjectIndex) * sizeof(uint64_t);
+      if (TableOffset > Config.SliceBytes ||
+          sizeof(uint64_t) > Config.SliceBytes - TableOffset)
+        return Error("invalid object table in device factory");
+      uint64_t ObjectOffset = *reinterpret_cast<const uint64_t *>(
+          Bytes.data() + SliceOffset + TableOffset);
+      if (ObjectOffset > Config.SliceBytes ||
+          sizeof(InputGenGPUFactoryObjectHeader) >
+              Config.SliceBytes - ObjectOffset)
+        return Error("invalid object layout in device factory");
+      auto *Object = reinterpret_cast<const InputGenGPUFactoryObjectHeader *>(
+          Bytes.data() + SliceOffset + ObjectOffset);
+      if (Object->Magic != INPUTGEN_GPU_FACTORY_OBJECT_MAGIC ||
+          Object->ObjectIndex != ObjectIndex)
+        return Error("invalid object layout in device factory");
+      uint64_t TotalSize = sizeof(*Object) + 3ull * Object->Capacity;
+      if (TotalSize > Config.SliceBytes - ObjectOffset)
+        return Error("invalid object capacity in device factory");
+
+      const uint8_t *Data = reinterpret_cast<const uint8_t *>(Object + 1);
+      const uint8_t *Mask = Data + Object->Capacity;
+      const uint8_t *Saved = Mask + Object->Capacity;
+      InputObject SerializedObject;
+      SerializedObject.Capacity = Object->Capacity;
+      uint32_t Offset = 0;
+      while (Offset < Object->Capacity) {
+        if (!(Mask[Offset] & INPUTGEN_GPU_MASK_READ) ||
+            (Mask[Offset] & INPUTGEN_GPU_MASK_POINTER)) {
+          ++Offset;
+          continue;
+        }
+        InputRun Run;
+        Run.Offset = Offset;
+        while (Offset < Object->Capacity &&
+               (Mask[Offset] & INPUTGEN_GPU_MASK_READ) &&
+               !(Mask[Offset] & INPUTGEN_GPU_MASK_POINTER)) {
+          Run.Bytes.push_back((Mask[Offset] & INPUTGEN_GPU_MASK_WRITTEN)
+                                  ? Saved[Offset]
+                                  : Data[Offset]);
+          ++Offset;
+        }
+        SerializedObject.Runs.push_back(std::move(Run));
+      }
+      Thread.Objects.push_back(std::move(SerializedObject));
+    }
+
+    uint64_t RelationBytes = uint64_t(Slice->RelationCount) *
+                             sizeof(InputGenGPUFactoryPointerRelation);
+    if (Slice->RelationTableOffset > Config.SliceBytes ||
+        RelationBytes > Config.SliceBytes - Slice->RelationTableOffset)
+      return Error("invalid pointer relationship table in device factory");
+    auto *Relations =
+        reinterpret_cast<const InputGenGPUFactoryPointerRelation *>(
+            Bytes.data() + SliceOffset + Slice->RelationTableOffset);
+    Thread.Relations.reserve(Slice->RelationCount);
+    for (uint32_t I = 0; I < Slice->RelationCount; ++I)
+      Thread.Relations.push_back(
+          {Relations[I].OwnerObject, Relations[I].SlotOffset,
+           Relations[I].TargetObject, Relations[I].TargetOffset});
+    if (Error Failure = validateThreadLayout(Thread, Config.SliceBytes,
+                                             Storage->Header.ObjectLimit,
+                                             Storage->Header.RelationLimit))
+      return Failure;
+  }
+  return CodecAccess::makeRecord(std::move(Storage));
+}
+
+Result<Factory> createReplayFactory(const Record &Value,
+                                    const ReplayRequest &Request) {
+  const Record::Impl &Storage = CodecAccess::record(Value);
+  if ((Request.NumTeams && *Request.NumTeams != Storage.Header.NumTeams) ||
+      (Request.NumThreads &&
+       *Request.NumThreads != Storage.Header.NumThreads) ||
+      (Request.SliceBytes &&
+       *Request.SliceBytes != Storage.Header.SliceBytes) ||
+      (Request.ObjectBytes &&
+       *Request.ObjectBytes != Storage.Header.ObjectBytes) ||
+      (Request.ConfigObjectsPerThread &&
+       *Request.ConfigObjectsPerThread !=
+           Storage.Header.ConfigObjectsPerThread))
+    return Error("replay options conflict with the InputGen data file");
+
+  FactoryConfig Config = configFromHeader(Storage.Header, Mode::Replay);
+  if (Error Failure = validateConfig(Config))
+    return Failure;
+  Result<uint64_t> Size =
+      getFactorySize(Storage.Header.NumLanes, Storage.Header.SliceBytes);
+  if (!Size)
+    return Size.error();
+  std::vector<uint8_t> Bytes(Size.value(), 0);
+
+  for (uint32_t ThreadIndex = 0; ThreadIndex < Storage.Header.NumLanes;
+       ++ThreadIndex) {
+    const InputThread &Thread = Storage.Threads[ThreadIndex];
+    if (Error Failure = validateThreadLayout(Thread, Storage.Header.SliceBytes,
+                                             Storage.Header.ObjectLimit,
+                                             Storage.Header.RelationLimit))
+      return Failure;
+    uint8_t *SliceStart = Bytes.data() + FactoryHeaderBytes +
+                          uint64_t(ThreadIndex) * Storage.Header.SliceBytes;
+    auto *Slice = reinterpret_cast<InputGenGPUFactorySliceHeader *>(SliceStart);
+    Slice->Magic = INPUTGEN_GPU_FACTORY_SLICE_MAGIC;
+    Slice->Version = INPUTGEN_GPU_FACTORY_VERSION;
+    Slice->Mode = INPUTGEN_MODE_REPLAY;
+    Slice->SliceIndex = ThreadIndex;
+    Slice->ObjectCount = static_cast<uint32_t>(Thread.Objects.size());
+    Slice->ObjectLimit = Storage.Header.ObjectLimit;
+    Slice->RelationCount = static_cast<uint32_t>(Thread.Relations.size());
+    Slice->RelationLimit = Storage.Header.RelationLimit;
+    Slice->ArgumentBytes = Thread.Objects.front().Capacity;
+    Slice->ObjectBytes = Storage.Header.ObjectBytes;
+    Slice->ObjectTableOffset = alignTo(sizeof(*Slice), 8);
+    Slice->RelationTableOffset =
+        Slice->ObjectTableOffset +
+        uint64_t(Slice->ObjectLimit) * sizeof(uint64_t);
+    uint64_t ObjectOffset =
+        alignTo(Slice->RelationTableOffset +
+                    uint64_t(Slice->RelationLimit) *
+                        sizeof(InputGenGPUFactoryPointerRelation),
+                8);
+    for (uint32_t ObjectIndex = 0; ObjectIndex < Thread.Objects.size();
+         ++ObjectIndex) {
+      const InputObject &SerializedObject = Thread.Objects[ObjectIndex];
+      uint64_t TotalSize = sizeof(InputGenGPUFactoryObjectHeader) +
+                           3ull * SerializedObject.Capacity;
+      if ((!SerializedObject.Capacity && ObjectIndex != 0) ||
+          ObjectOffset > Storage.Header.SliceBytes ||
+          TotalSize > Storage.Header.SliceBytes - ObjectOffset)
+        return Error("InputGen replay object does not fit in its slice");
+      auto *Object = reinterpret_cast<InputGenGPUFactoryObjectHeader *>(
+          SliceStart + ObjectOffset);
+      Object->Magic = INPUTGEN_GPU_FACTORY_OBJECT_MAGIC;
+      Object->ObjectIndex = ObjectIndex;
+      Object->Capacity = SerializedObject.Capacity;
+      Object->SliceOffset = ObjectOffset;
+      *reinterpret_cast<uint64_t *>(SliceStart + Slice->ObjectTableOffset +
+                                    ObjectIndex * sizeof(uint64_t)) =
+          ObjectOffset;
+      uint8_t *Data = reinterpret_cast<uint8_t *>(Object + 1);
+      uint8_t *Mask = Data + Object->Capacity;
+      for (const InputRun &Run : SerializedObject.Runs) {
+        if (Run.Offset > Object->Capacity ||
+            Run.Bytes.size() > Object->Capacity - Run.Offset)
+          return Error("invalid replay run");
+        std::memcpy(Data + Run.Offset, Run.Bytes.data(), Run.Bytes.size());
+        std::memset(Mask + Run.Offset, INPUTGEN_GPU_MASK_READ,
+                    Run.Bytes.size());
+      }
+      ObjectOffset = alignTo(ObjectOffset + TotalSize, 8);
+    }
+    auto *Relations = reinterpret_cast<InputGenGPUFactoryPointerRelation *>(
+        SliceStart + Slice->RelationTableOffset);
+    for (uint32_t I = 0; I < Thread.Relations.size(); ++I)
+      Relations[I] = {
+          Thread.Relations[I].OwnerObject, Thread.Relations[I].SlotOffset,
+          Thread.Relations[I].TargetObject, Thread.Relations[I].TargetOffset};
+    Slice->NextOffset = ObjectOffset;
+  }
+
+  initializeFactoryHeader(Bytes, Config);
+  return CodecAccess::makeFactory(Config, std::move(Bytes));
+}
+
+Result<std::vector<ThreadResult>> inspectThreadResults(const Factory &Value) {
+  const FactoryConfig &Config = Value.config();
+  Result<uint32_t> NumThreads =
+      getNumThreads(Config.NumTeams, Config.NumThreads);
+  if (!NumThreads)
+    return NumThreads.error();
+  const std::vector<uint8_t> &Bytes = CodecAccess::bytes(Value);
+  Result<uint64_t> ExpectedSize =
+      getFactorySize(NumThreads.value(), Config.SliceBytes);
+  if (!ExpectedSize || ExpectedSize.value() != Bytes.size())
+    return Error("factory copy has an invalid size");
+
+  std::vector<ThreadResult> Results;
+  Results.reserve(NumThreads.value());
+  for (uint32_t ThreadIndex = 0; ThreadIndex < NumThreads.value();
+       ++ThreadIndex) {
+    uint64_t Offset =
+        FactoryHeaderBytes + uint64_t(ThreadIndex) * Config.SliceBytes;
+    auto *Slice = reinterpret_cast<const InputGenGPUFactorySliceHeader *>(
+        Bytes.data() + Offset);
+    if (Slice->Magic != INPUTGEN_GPU_FACTORY_SLICE_MAGIC ||
+        Slice->Version != INPUTGEN_GPU_FACTORY_VERSION ||
+        Slice->SliceIndex != ThreadIndex)
+      return makeError("device GPU thread %u has an invalid factory slice",
+                       ThreadIndex);
+    Results.push_back(
+        {ThreadIndex, Slice->Error, Slice->ResultSize, Slice->ResultBits});
+  }
+  return Results;
+}
+
+} // namespace inputgen_gpu
