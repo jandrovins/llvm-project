@@ -52,11 +52,8 @@ struct InputGenInvocation {
   inputgen_gpu::Mode Mode;
   std::string DataFilename;
   int32_t DeviceId;
-  uint32_t NumTeams;
-  uint32_t NumThreads;
-  uint64_t SliceBytes;
-  uint64_t ObjectBytes;
-  uint32_t ConfigObjectsPerThread;
+  inputgen_gpu::FactoryConfig FactoryConfig;
+  inputgen_gpu::ReplayRequest ReplayRequest;
 };
 
 // Owns the launcher-allocated device factory and releases it on destruction.
@@ -187,49 +184,29 @@ Expected<InputGenInvocation> parseInvocation() {
   if (Error Err = getInteger(JsonObj, "DeviceId", JsonDeviceId))
     return std::move(Err);
 
-  return InputGenInvocation{
+  InputGenInvocation Invocation{
       *ModeOrErr,
       InputGenDataFilename.empty()
           ? getDefaultInputGenDataFilename(JsonFilename)
           : InputGenDataFilename.getValue(),
       DeviceIdOpt >= 0 ? DeviceIdOpt : JsonDeviceId,
-      NumTeamsOpt > 0 ? NumTeamsOpt.getValue() : 1,
-      NumThreadsOpt > 0 ? NumThreadsOpt.getValue() : 1,
-      FactoryBytesOpt,
-      ObjectBytesOpt,
-      ConfigObjectsPerThreadOpt,
+      {NumTeamsOpt > 0 ? NumTeamsOpt.getValue() : 1,
+       NumThreadsOpt > 0 ? NumThreadsOpt.getValue() : 1, FactoryBytesOpt,
+       ObjectBytesOpt, ConfigObjectsPerThreadOpt},
+      {},
   };
-}
-
-inputgen_gpu::FactoryConfig
-getFactoryConfig(const InputGenInvocation &Invocation) {
-  return {Invocation.NumTeams,    Invocation.NumThreads,
-          Invocation.SliceBytes,
-          Invocation.ObjectBytes, Invocation.ConfigObjectsPerThread};
-}
-
-inputgen_gpu::ReplayRequest getReplayRequest() {
-  inputgen_gpu::ReplayRequest Request;
   if (NumTeamsOpt.getNumOccurrences())
-    Request.NumTeams = NumTeamsOpt;
+    Invocation.ReplayRequest.NumTeams = NumTeamsOpt;
   if (NumThreadsOpt.getNumOccurrences())
-    Request.NumThreads = NumThreadsOpt;
+    Invocation.ReplayRequest.NumThreads = NumThreadsOpt;
   if (FactoryBytesOpt.getNumOccurrences())
-    Request.SliceBytes = FactoryBytesOpt;
+    Invocation.ReplayRequest.SliceBytes = FactoryBytesOpt;
   if (ObjectBytesOpt.getNumOccurrences())
-    Request.ObjectBytes = ObjectBytesOpt;
+    Invocation.ReplayRequest.ObjectBytes = ObjectBytesOpt;
   if (ConfigObjectsPerThreadOpt.getNumOccurrences())
-    Request.ConfigObjectsPerThread = ConfigObjectsPerThreadOpt;
-  return Request;
-}
-
-void applyFactoryConfig(InputGenInvocation &Invocation,
-                        const inputgen_gpu::FactoryConfig &Config) {
-  Invocation.NumTeams = Config.NumTeams;
-  Invocation.NumThreads = Config.NumThreads;
-  Invocation.SliceBytes = Config.SliceBytes;
-  Invocation.ObjectBytes = Config.ObjectBytes;
-  Invocation.ConfigObjectsPerThread = Config.ConfigObjectsPerThread;
+    Invocation.ReplayRequest.ConfigObjectsPerThread =
+        ConfigObjectsPerThreadOpt;
+  return Invocation;
 }
 
 Expected<std::unique_ptr<MemoryBuffer>> loadDeviceImage() {
@@ -295,10 +272,10 @@ void buildKernelLaunchArguments(const InputGenInvocation &Invocation,
   Args.KernelArgs.ArgTypes = Args.ArgTypes;
   Args.KernelArgs.Flags.IsPtrArgs = 1;
   Args.KernelArgs.Flags.StrictBlocksAndThreads = 1;
-  Args.KernelArgs.UserNumBlocks[0] = Invocation.NumTeams;
+  Args.KernelArgs.UserNumBlocks[0] = Invocation.FactoryConfig.NumTeams;
   Args.KernelArgs.UserNumBlocks[1] = 1;
   Args.KernelArgs.UserNumBlocks[2] = 1;
-  Args.KernelArgs.UserThreadLimit[0] = Invocation.NumThreads;
+  Args.KernelArgs.UserThreadLimit[0] = Invocation.FactoryConfig.NumThreads;
   Args.KernelArgs.UserThreadLimit[1] = 1;
   Args.KernelArgs.UserThreadLimit[2] = 1;
 }
@@ -306,8 +283,9 @@ void buildKernelLaunchArguments(const InputGenInvocation &Invocation,
 Error launchEntryKernel(const InputGenInvocation &Invocation,
                         llvm::offloading::EntryTy &Entry,
                         KernelLaunchArguments &Args) {
-  if (__tgt_target_kernel(nullptr, Invocation.DeviceId, Invocation.NumTeams,
-                          Invocation.NumThreads, Entry.Address,
+  if (__tgt_target_kernel(nullptr, Invocation.DeviceId,
+                          Invocation.FactoryConfig.NumTeams,
+                          Invocation.FactoryConfig.NumThreads, Entry.Address,
                           &Args.KernelArgs) != OMP_TGT_SUCCESS)
     return createErr("failed to launch entry kernel '%s'",
                      InputGenGPUEntryPointName.data());
@@ -342,16 +320,15 @@ Error runInputGenGPU() {
 
   auto CreateFactory = [&]() -> inputgen_gpu::Result<inputgen_gpu::Factory> {
     if (Invocation.Mode == inputgen_gpu::Mode::Generate)
-      return inputgen_gpu::createGenerationFactory(
-          getFactoryConfig(Invocation));
+      return inputgen_gpu::createGenerationFactory(Invocation.FactoryConfig);
     return inputgen_gpu::createReplayFactory(Invocation.DataFilename,
-                                             getReplayRequest());
+                                             Invocation.ReplayRequest);
   };
   inputgen_gpu::Result<inputgen_gpu::Factory> FactoryOrErr = CreateFactory();
   if (!FactoryOrErr)
     return convertResultError(FactoryOrErr);
   inputgen_gpu::Factory HostFactory = std::move(FactoryOrErr).value();
-  applyFactoryConfig(Invocation, HostFactory.config());
+  Invocation.FactoryConfig = HostFactory.config();
 
   Expected<std::unique_ptr<MemoryBuffer>> ImageBufferOrErr = loadDeviceImage();
   if (!ImageBufferOrErr)
