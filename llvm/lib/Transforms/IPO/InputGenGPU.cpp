@@ -9,9 +9,9 @@
 #include "llvm/Transforms/IPO/InputGenGPU.h"
 #include "llvm/Transforms/IPO/Instrumentor.h"
 
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/BasicBlock.h"
@@ -22,8 +22,8 @@
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/Instructions.h"
 #include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
@@ -126,6 +126,20 @@ bool collectInstrumentedFunctions(Function *EntryFn,
       continue;
 
     for (Instruction &I : instructions(Fn)) {
+      if (auto *Store = dyn_cast<StoreInst>(&I)) {
+        Value *Destination = getUnderlyingObject(Store->getPointerOperand());
+        bool IsKnownNonFactoryStorage =
+            isa<AllocaInst>(Destination) || isa<GlobalVariable>(Destination);
+        if (Store->getValueOperand()->getType()->isPointerTy() &&
+            !IsKnownNonFactoryStorage) {
+          IIRB.Ctx.diagnose(DiagnosticInfoInstrumentation(
+              Twine("InputGen GPU does not yet support pointer stores in '") +
+                  EntryFn->getName() +
+                  "'; logical relation updates must be implemented first",
+              DS_Warning));
+          return false;
+        }
+      }
       auto *Call = dyn_cast<CallBase>(&I);
       if (!Call)
         continue;
@@ -288,13 +302,14 @@ bool createInputGenGPUEntryKernel(Module &M, InstrumentorIRBuilderTy &IIRB,
       IRB.CreateCall(PrepareLane,
                      {Context, Workgroup, Workitem,
                       ConstantInt::get(IIRB.Int64Ty, ArgumentBytes),
-                     ConstantInt::get(IIRB.Int32Ty, PointerArgumentCount)},
+                      ConstantInt::get(IIRB.Int32Ty, PointerArgumentCount)},
                      "inputgen.arguments");
 
   // A failed slice initialization has no valid argument object. Return before
   // any wrapper load can dereference the null result; the device runtime keeps
   // its per-GPU-thread error for the launcher to copy back.
-  BasicBlock *AbortBB = BasicBlock::Create(IIRB.Ctx, "inputgen.abort", EntryPoint);
+  BasicBlock *AbortBB =
+      BasicBlock::Create(IIRB.Ctx, "inputgen.abort", EntryPoint);
   BasicBlock *ContinueBB =
       BasicBlock::Create(IIRB.Ctx, "inputgen.continue", EntryPoint);
   IRB.CreateCondBr(IRB.CreateIsNull(ArgumentData), AbortBB, ContinueBB);
@@ -427,6 +442,55 @@ private:
   EntryKernelInfo &Info;
 };
 
+// Stop an instrumented function before it executes a memory operation whose
+// callback reported an error. Checks after direct calls propagate a helper's
+// error back through the selected call closure until the wrapper returns.
+void addInputGenGPUErrorPropagation(Module &M, EntryKernelInfo &Info) {
+  FunctionCallee ErrorPending = M.getOrInsertFunction(
+      "__ig_error_pending",
+      FunctionType::get(Type::getInt32Ty(M.getContext()), false));
+
+  for (Function *Fn : Info.InstrumentedFunctions) {
+    SmallVector<CallInst *> GuardedCalls;
+    for (Instruction &I : instructions(Fn)) {
+      auto *Call = dyn_cast<CallInst>(&I);
+      if (!Call)
+        continue;
+      Function *Callee = Call->getCalledFunction();
+      if (!Callee)
+        continue;
+      if (Callee->getName() == "__ig_pre_load" ||
+          Callee->getName() == "__ig_pre_store" ||
+          Info.InstrumentedFunctions.contains(Callee))
+        GuardedCalls.push_back(Call);
+    }
+    if (GuardedCalls.empty())
+      continue;
+
+    BasicBlock *ErrorBB =
+        BasicBlock::Create(M.getContext(), "inputgen.error", Fn);
+    IRBuilder<> ErrorBuilder(ErrorBB);
+    if (Fn->getReturnType()->isVoidTy())
+      ErrorBuilder.CreateRetVoid();
+    else
+      ErrorBuilder.CreateRet(Constant::getNullValue(Fn->getReturnType()));
+
+    for (CallInst *Call : reverse(GuardedCalls)) {
+      Instruction *Next = Call->getNextNode();
+      if (!Next)
+        continue;
+      BasicBlock *CallBB = Call->getParent();
+      BasicBlock *ContinueBB =
+          CallBB->splitBasicBlock(Next, "inputgen.no-error");
+      CallBB->getTerminator()->eraseFromParent();
+      IRBuilder<> GuardBuilder(CallBB);
+      Value *HasError = GuardBuilder.CreateICmpNE(
+          GuardBuilder.CreateCall(ErrorPending), GuardBuilder.getInt32(0));
+      GuardBuilder.CreateCondBr(HasError, ErrorBB, ContinueBB);
+    }
+  }
+}
+
 } // namespace
 
 PreservedAnalyses InputGenGPUPass::run(Module &M, ModuleAnalysisManager &MAM) {
@@ -440,6 +504,7 @@ PreservedAnalyses InputGenGPUPass::run(Module &M, ModuleAnalysisManager &MAM) {
 
   InputGenGPUConfig IConf(Info);
   (void)InstrumentorPass(/*FS=*/nullptr, &IConf, &IIRB).run(M, MAM);
+  addInputGenGPUErrorPropagation(M, Info);
   // Wrapper creation itself mutates the module even when no callback is
   // inserted, so the Instrumentor's change result alone is insufficient.
   return PreservedAnalyses::none();

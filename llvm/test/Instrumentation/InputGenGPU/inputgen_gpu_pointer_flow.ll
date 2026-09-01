@@ -7,6 +7,7 @@ target triple = "amdgcn-amd-amdhsa"
 define internal i32 @helper(ptr %p) {
 ; CHECK-LABEL: define internal i32 @helper(
 ; CHECK: [[HELPER_ADDRESS:%.*]] = call ptr @__ig_pre_load(ptr %p, i32 0, i64 4, i64 4, i32 1)
+; CHECK: call i32 @__ig_error_pending()
 ; CHECK: [[HELPER_VALUE:%.*]] = load i32, ptr [[HELPER_ADDRESS]], align 4
 ; CHECK: ret i32 [[HELPER_VALUE]]
 entry:
@@ -17,8 +18,10 @@ entry:
 define hidden i32 @vvv_foo(ptr %s) {
 ; CHECK-LABEL: define hidden i32 @vvv_foo(
 ; CHECK: [[SLOT_ADDRESS:%.*]] = call ptr @__ig_pre_load(ptr %s, i32 0, i64 8, i64 8, i32 4)
+; CHECK: call i32 @__ig_error_pending()
 ; CHECK: [[POINTER:%.*]] = load ptr, ptr [[SLOT_ADDRESS]], align 8
 ; CHECK: call i32 @helper(ptr [[POINTER]])
+; CHECK: call i32 @__ig_error_pending()
 entry:
   %p = load ptr, ptr %s, align 8
   %value = call i32 @helper(ptr %p)

@@ -1,5 +1,5 @@
-// Verify a callback error returns aligned fallback storage instead of an
-// encoded pointer that the immediately following instrumented access would
+// Verify a callback error returns aligned fallback storage instead of the
+// invalid address that the immediately following instrumented access would
 // dereference.
 // RUN: %inputgen-gpu-cc -I%inputgen-gpu-src %inputgen-gpu-src/inputgen_gpu_runtime_state.c \
 // RUN:   %inputgen-gpu-src/inputgen_gpu_runtime_callbacks.c %s -o %t

@@ -24,10 +24,12 @@ void *__ig_prepare_lane(void *Context, uint64_t WorkgroupIndex,
                         uint32_t PointerArgumentCount);
 // Records one non-void user-function result in the current slice header.
 void __ig_store_result(uint64_t Bits, uint32_t Size);
-// Replaces an encoded load address with checked object data memory.
+// Reports whether the current GPU thread has recorded a callback error.
+int32_t __ig_error_pending(void);
+// Replaces a factory-backed load address with checked object data memory.
 void *__ig_pre_load(void *Pointer, int32_t PointerAS, int64_t ValueSize,
                     int64_t Alignment, int32_t ValueTypeId);
-// Replaces an encoded store address with checked object data memory.
+// Replaces a factory-backed store address with checked object data memory.
 void *__ig_pre_store(void *Pointer, int32_t PointerAS, int64_t ValueSize,
                      int64_t Alignment, int32_t ValueTypeId);
 

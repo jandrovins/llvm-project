@@ -35,13 +35,6 @@ enum {
   INPUTGEN_GPU_MASK_POINTER = 4u,
 };
 
-// Program-visible runtime pointers are encoded AS0 object handles, not device
-// addresses. The callback decodes their object index and signed byte offset.
-#define INPUTGEN_GPU_VPTR_MAGIC UINT64_C(0xA)
-#define INPUTGEN_GPU_VPTR_OFFSET_BITS 40u
-#define INPUTGEN_GPU_VPTR_OFFSET_BIAS (UINT64_C(1) << 39)
-#define INPUTGEN_GPU_VPTR_OBJECT_MASK ((UINT64_C(1) << 20) - 1)
-
 // Describes the launch-wide factory allocation passed as the opaque context.
 typedef struct InputGenGPUFactoryHeader {
   uint32_t Magic;

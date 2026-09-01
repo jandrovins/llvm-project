@@ -52,6 +52,11 @@ if(TARGET omptarget)
         set(INPUTGEN_GPU_RT_AVAILABLE TRUE)
       endif()
     endif()
+    if(INPUTGEN_GPU_RT_AVAILABLE)
+      set(INPUTGEN_GPU_RT_AVAILABLE_PYBOOL True)
+    else()
+      set(INPUTGEN_GPU_RT_AVAILABLE_PYBOOL False)
+    endif()
 
     add_offload_testsuite(check-libomptarget-${CURRENT_TARGET}
       "Running libomptarget tests"

@@ -6,4 +6,5 @@
 // CHECK-DAG: __ig_prepare_lane
 // CHECK-DAG: __ig_pre_load
 // CHECK-DAG: __ig_pre_store
+// CHECK-DAG: __ig_error_pending
 // CHECK-DAG: __ig_store_result

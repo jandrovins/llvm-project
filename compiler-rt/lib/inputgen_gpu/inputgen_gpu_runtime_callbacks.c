@@ -6,14 +6,11 @@ InputGenGPUFactorySliceHeader *__ig_current_slice(void);
 InputGenGPUFactoryObjectHeader *__ig_get_object(uint32_t);
 InputGenGPUFactoryObjectHeader *__ig_allocate_object(uint32_t);
 InputGenGPUFactoryPointerRelation *__ig_relations(void);
+uint64_t __ig_current_slice_bytes(void);
 
 static void setError(InputGenGPUFactorySliceHeader *Slice, uint32_t Error) {
   if (Slice && Slice->Error == INPUTGEN_GPU_FACTORY_ERROR_NONE)
     Slice->Error = Error;
-}
-
-static int isVirtualPointer(void *Pointer) {
-  return ((uint64_t)(uintptr_t)Pointer >> 60) == INPUTGEN_GPU_VPTR_MAGIC;
 }
 
 static void *failureAddress(InputGenGPUFactorySliceHeader *Slice,
@@ -38,28 +35,51 @@ static uint64_t generatedBits(int32_t TypeId, int64_t Size, int *IsValid) {
 }
 
 static InputGenGPUFactoryObjectHeader *
-decodePointer(void *Pointer, int32_t PointerAS, int64_t Size,
-              uint32_t *ObjectIndex, uint32_t *OffsetOut) {
-  // Translate an encoded AS0 handle into a checked factory object range.
+findObject(void *Pointer, int32_t PointerAS, int64_t Size, int64_t Alignment,
+           uint32_t *ObjectIndex, uint32_t *OffsetOut, int *IsFactoryAddress) {
+  // Resolve a real AS0 address against allocated object-data ranges in the
+  // current GPU thread's fixed slice. External addresses pass through.
   InputGenGPUFactorySliceHeader *Slice = __ig_current_slice();
-  if (!Slice || PointerAS != 0 || Size <= 0 || Size > 8)
+  *IsFactoryAddress = 0;
+  if (!Slice || PointerAS != 0)
     return 0;
-  uint64_t Bits = (uint64_t)(uintptr_t)Pointer;
-  if (!isVirtualPointer(Pointer))
-    return 0;
-  uint32_t Index = (uint32_t)((Bits >> INPUTGEN_GPU_VPTR_OFFSET_BITS) &
-                              INPUTGEN_GPU_VPTR_OBJECT_MASK);
-  int64_t Offset = (int64_t)(Bits & (INPUTGEN_GPU_VPTR_OFFSET_BIAS * 2 - 1)) -
-                   (int64_t)INPUTGEN_GPU_VPTR_OFFSET_BIAS;
-  InputGenGPUFactoryObjectHeader *Object = __ig_get_object(Index);
-  if (!Object || Offset < 0 || (uint64_t)Offset > Object->Capacity ||
-      (uint64_t)Size > Object->Capacity - (uint64_t)Offset) {
-    setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_ACCESS);
+
+  uintptr_t Address = (uintptr_t)Pointer;
+  uintptr_t SliceBegin = (uintptr_t)Slice;
+  uint64_t SliceBytes = __ig_current_slice_bytes();
+  if (Address >= SliceBegin && Address - SliceBegin < SliceBytes)
+    *IsFactoryAddress = 1;
+
+  if (Size <= 0 || Size > 8 || Alignment <= 0 ||
+      ((uint64_t)Alignment & ((uint64_t)Alignment - 1)) != 0) {
+    if (*IsFactoryAddress)
+      setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_ACCESS);
     return 0;
   }
-  *ObjectIndex = Index;
-  *OffsetOut = (uint32_t)Offset;
-  return Object;
+
+  for (uint32_t Index = 0; Index < Slice->ObjectCount; ++Index) {
+    InputGenGPUFactoryObjectHeader *Object = __ig_get_object(Index);
+    if (!Object)
+      return 0;
+    uintptr_t Data = (uintptr_t)(Object + 1);
+    if (Address < Data)
+      continue;
+    uint64_t Offset = Address - Data;
+    if (Offset > Object->Capacity || (uint64_t)Size > Object->Capacity - Offset)
+      continue;
+    if ((Address & ((uintptr_t)Alignment - 1)) != 0) {
+      setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_ACCESS);
+      return 0;
+    }
+    *IsFactoryAddress = 1;
+    *ObjectIndex = Index;
+    *OffsetOut = (uint32_t)Offset;
+    return Object;
+  }
+
+  if (*IsFactoryAddress)
+    setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_ACCESS);
+  return 0;
 }
 
 static void *dataAddress(InputGenGPUFactoryObjectHeader *Object,
@@ -78,30 +98,22 @@ findRelation(InputGenGPUFactorySliceHeader *Slice, uint32_t Owner,
   return 0;
 }
 
-static void *encodePointer(uint32_t ObjectIndex, int64_t Offset) {
-  // Recreate a program-visible handle from a recorded logical target.
-  uint64_t Field = (uint64_t)(Offset + (int64_t)INPUTGEN_GPU_VPTR_OFFSET_BIAS);
-  return (void *)(uintptr_t)(((uint64_t)INPUTGEN_GPU_VPTR_MAGIC << 60) |
-                             ((uint64_t)ObjectIndex
-                              << INPUTGEN_GPU_VPTR_OFFSET_BITS) |
-                             (Field & (INPUTGEN_GPU_VPTR_OFFSET_BIAS * 2 - 1)));
-}
-
 void *__ig_pre_load(void *Pointer, int32_t PointerAS, int64_t ValueSize,
                     int64_t Alignment, int32_t ValueTypeId) {
-  (void)Alignment;
   InputGenGPUFactorySliceHeader *Slice = __ig_current_slice();
   uint32_t Owner = 0, Offset = 0;
+  int IsFactoryAddress = 0;
   InputGenGPUFactoryObjectHeader *Object =
-      decodePointer(Pointer, PointerAS, ValueSize, &Owner, &Offset);
+      findObject(Pointer, PointerAS, ValueSize, Alignment, &Owner, &Offset,
+                 &IsFactoryAddress);
   if (!Object)
-    return isVirtualPointer(Pointer) ? failureAddress(Slice, Pointer) : Pointer;
+    return IsFactoryAddress ? failureAddress(Slice, Pointer) : Pointer;
 
   char *Data = (char *)(Object + 1);
   unsigned char *Mask = (unsigned char *)(Data + Object->Capacity);
   if (ValueTypeId == INPUTGEN_GPU_VALUE_POINTER) {
     // Pointer slots record object relationships, never a serialized address.
-    if (ValueSize != 8) {
+    if (ValueSize != (int64_t)sizeof(void *)) {
       setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_TYPE);
       return failureAddress(Slice, Pointer);
     }
@@ -119,17 +131,18 @@ void *__ig_pre_load(void *Pointer, int32_t PointerAS, int64_t ValueSize,
       }
       uint32_t Target = Slice->ObjectCount;
       if (!__ig_allocate_object(Target))
-        return Pointer;
+        return failureAddress(Slice, Pointer);
       Relation = &__ig_relations()[Slice->RelationCount++];
       Relation->OwnerObject = Owner;
       Relation->SlotOffset = Offset;
       Relation->TargetObject = Target;
       Relation->TargetOffset = 0;
     }
-    if (!__ig_get_object(Relation->TargetObject))
+    InputGenGPUFactoryObjectHeader *Target =
+        __ig_get_object(Relation->TargetObject);
+    if (!Target || Relation->TargetOffset > Target->Capacity)
       return failureAddress(Slice, Pointer);
-    *(void **)(Data + Offset) =
-        encodePointer(Relation->TargetObject, Relation->TargetOffset);
+    *(void **)(Data + Offset) = dataAddress(Target, Relation->TargetOffset);
     for (uint32_t I = 0; I < (uint32_t)ValueSize; ++I)
       Mask[Offset + I] |= INPUTGEN_GPU_MASK_READ | INPUTGEN_GPU_MASK_POINTER;
     return dataAddress(Object, Offset);
@@ -158,15 +171,18 @@ void *__ig_pre_load(void *Pointer, int32_t PointerAS, int64_t ValueSize,
 
 void *__ig_pre_store(void *Pointer, int32_t PointerAS, int64_t ValueSize,
                      int64_t Alignment, int32_t ValueTypeId) {
-  (void)Alignment;
-  (void)ValueTypeId;
+  InputGenGPUFactorySliceHeader *Slice = __ig_current_slice();
+  if (ValueTypeId == INPUTGEN_GPU_VALUE_POINTER) {
+    setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_TYPE);
+    return failureAddress(Slice, Pointer);
+  }
   uint32_t Owner = 0, Offset = 0;
+  int IsFactoryAddress = 0;
   InputGenGPUFactoryObjectHeader *Object =
-      decodePointer(Pointer, PointerAS, ValueSize, &Owner, &Offset);
+      findObject(Pointer, PointerAS, ValueSize, Alignment, &Owner, &Offset,
+                 &IsFactoryAddress);
   if (!Object)
-    return isVirtualPointer(Pointer) ? failureAddress(__ig_current_slice(),
-                                                       Pointer)
-                                     : Pointer;
+    return IsFactoryAddress ? failureAddress(Slice, Pointer) : Pointer;
   char *Data = (char *)(Object + 1);
   unsigned char *Mask = (unsigned char *)(Data + Object->Capacity);
   char *Saved = (char *)(Mask + Object->Capacity);

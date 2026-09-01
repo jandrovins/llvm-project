@@ -21,4 +21,18 @@
 // CAPACITY-CONFLICT: error: replay options conflict with the InputGen data file
 // OUTPUT-ERROR: error: failed to open generated data file
 
-int vvv_foo(int *A) { return (*A) * (*A); }
+struct Inputs {
+  int *Values;
+  int Count;
+};
+
+__attribute__((noinline)) int reduce(int *Values, int Count) {
+  int Sum = 0;
+  for (int I = 0; I < Count; ++I)
+    Sum += Values[I];
+  return Sum;
+}
+
+int vvv_foo(struct Inputs *Input) {
+  return reduce(Input->Values, Input->Count);
+}

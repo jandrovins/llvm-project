@@ -4,7 +4,7 @@
 
 // Keep the launch-wide context word in AS1, a device-global address space on
 // the supported targets, and derive each GPU thread's slice from its hardware
-// IDs. User-visible pointers remain encoded AS0 values.
+// IDs. User-visible pointers are generic AS0 addresses into the fixed slice.
 static __attribute__((address_space(1))) uint64_t FactoryContextBits;
 
 static uint64_t alignTo(uint64_t Value, uint64_t Alignment);
@@ -89,7 +89,7 @@ allocateObject(InputGenGPUFactorySliceHeader *Slice, uint64_t SliceBytes,
                uint32_t ObjectIndex, uint64_t Capacity) {
   // Reserve the next fixed-capacity object record without growing the slice.
   if (ObjectIndex != Slice->ObjectCount || ObjectIndex >= Slice->ObjectLimit ||
-      ObjectIndex > INPUTGEN_GPU_VPTR_OBJECT_MASK || Capacity > UINT32_MAX) {
+      Capacity > UINT32_MAX) {
     setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_CAPACITY);
     return 0;
   }
@@ -109,15 +109,6 @@ allocateObject(InputGenGPUFactorySliceHeader *Slice, uint64_t SliceBytes,
   Slice->NextOffset = Offset + Total;
   ++Slice->ObjectCount;
   return Object;
-}
-
-static void *encodePointer(uint32_t ObjectIndex, int64_t Offset) {
-  // Keep object identity and pointer arithmetic in an AS0 handle value.
-  uint64_t Field = (uint64_t)(Offset + (int64_t)INPUTGEN_GPU_VPTR_OFFSET_BIAS);
-  uint64_t Bits = ((uint64_t)INPUTGEN_GPU_VPTR_MAGIC << 60) |
-                  ((uint64_t)ObjectIndex << INPUTGEN_GPU_VPTR_OFFSET_BITS) |
-                  (Field & (INPUTGEN_GPU_VPTR_OFFSET_BIAS * 2 - 1));
-  return (void *)(uintptr_t)Bits;
 }
 
 void *__ig_prepare_lane(void *Context, uint64_t WorkgroupIndex,
@@ -193,7 +184,8 @@ void *__ig_prepare_lane(void *Context, uint64_t WorkgroupIndex,
   } else {
     return 0;
   }
-  return encodePointer(0, 0);
+  InputGenGPUFactoryObjectHeader *Arguments = getObject(Slice, 0);
+  return Arguments ? (void *)(Arguments + 1) : 0;
 }
 
 void __ig_store_result(uint64_t Bits, uint32_t Size) {
@@ -222,4 +214,14 @@ InputGenGPUFactoryObjectHeader *__ig_allocate_object(uint32_t Index) {
 InputGenGPUFactoryPointerRelation *__ig_relations(void) {
   InputGenGPUFactorySliceHeader *Slice = currentSlice();
   return Slice ? relationTable(Slice) : 0;
+}
+
+uint64_t __ig_current_slice_bytes(void) {
+  InputGenGPUFactoryHeader *Factory = currentFactory();
+  return Factory ? Factory->SliceBytes : 0;
+}
+
+int32_t __ig_error_pending(void) {
+  InputGenGPUFactorySliceHeader *Slice = currentSlice();
+  return Slice && Slice->Error != INPUTGEN_GPU_FACTORY_ERROR_NONE;
 }

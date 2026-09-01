@@ -239,7 +239,6 @@ Error validateFactoryOptions(const InputGenInvocation &Invocation) {
 Error validateLaneLayout(const InputLane &Lane, uint64_t SliceBytes,
                          uint32_t ObjectLimit, uint32_t RelationLimit) {
   if (Lane.Objects.empty() ||
-      Lane.Objects.size() > INPUTGEN_GPU_VPTR_OBJECT_MASK + 1 ||
       Lane.Objects.size() > ObjectLimit ||
       Lane.Relations.size() > RelationLimit ||
       Lane.Relations.size() + 1 != Lane.Objects.size() ||

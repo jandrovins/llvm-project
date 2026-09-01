@@ -27,6 +27,8 @@ int main(void) {
   void *PointerSlot =
       __ig_pre_load(Arguments, 0, 8, 8, INPUTGEN_GPU_VALUE_POINTER);
   void *Pointer = *(void **)PointerSlot;
+  printf("real-pointer=%d\n", (unsigned char *)Pointer >= Factory &&
+                                  (unsigned char *)Pointer < Factory + 4096);
   int *Value =
       (int *)__ig_pre_load(Pointer, 0, 4, 4, INPUTGEN_GPU_VALUE_INTEGER);
 
@@ -69,6 +71,7 @@ int main(void) {
   return 0;
 }
 
+// CHECK: real-pointer=1
 // CHECK: generate=9 objects=2 relations=1
 // CHECK: replay=9 error=0
 // CHECK: nested=9 objects=3/3 relations=2/2
