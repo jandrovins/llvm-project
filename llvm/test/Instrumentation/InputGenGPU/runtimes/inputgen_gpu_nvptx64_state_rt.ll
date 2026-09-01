@@ -2,8 +2,7 @@
 target datalayout = "e-p6:32:32-i64:64-i128:128-v16:16-v32:32-n16:32:64"
 target triple = "nvptx64-nvidia-cuda"
 
-define protected ptr @__ig_prepare_thread(ptr %context, i64 %argument_bytes,
-                                          i32 %pointer_count) {
+define protected ptr @__ig_prepare_thread(ptr %context, i64 %argument_bytes) {
   ret ptr %context
 }
 

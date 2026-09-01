@@ -117,13 +117,11 @@ allocateObject(InputGenGPUFactorySliceHeader *Slice, uint64_t SliceBytes,
   return Object;
 }
 
-void *__ig_prepare_thread(void *Context, uint64_t ArgumentBytes,
-                          uint32_t PointerArgumentCount) {
+void *__ig_prepare_thread(void *Context, uint64_t ArgumentBytes) {
   InputGenGPUFactoryHeader *Factory = (InputGenGPUFactoryHeader *)Context;
   if (!Factory || Factory->Magic != INPUTGEN_GPU_FACTORY_SLICE_MAGIC ||
       Factory->Version != INPUTGEN_GPU_FACTORY_VERSION ||
-      !Factory->ConfigObjectsPerThread ||
-      PointerArgumentCount > UINT32_MAX - Factory->ConfigObjectsPerThread)
+      !Factory->ObjectsPerThread)
     return 0;
   FactoryContextBits = (uint64_t)(uintptr_t)Factory;
   uint64_t ThreadIndex = 0;
@@ -139,7 +137,7 @@ void *__ig_prepare_thread(void *Context, uint64_t ArgumentBytes,
     Slice->Version = INPUTGEN_GPU_FACTORY_VERSION;
     Slice->Mode = Factory->Mode;
     Slice->SliceIndex = (uint32_t)ThreadIndex;
-    Slice->ObjectLimit = PointerArgumentCount + Factory->ConfigObjectsPerThread;
+    Slice->ObjectLimit = Factory->ObjectsPerThread;
     Slice->RelationLimit = Slice->ObjectLimit - 1;
     Slice->ArgumentBytes = ArgumentBytes;
     Slice->ObjectBytes = Factory->ObjectBytes;
@@ -164,8 +162,7 @@ void *__ig_prepare_thread(void *Context, uint64_t ArgumentBytes,
         Slice->Version != INPUTGEN_GPU_FACTORY_VERSION ||
         Slice->SliceIndex != ThreadIndex ||
         Slice->ArgumentBytes != ArgumentBytes ||
-        Slice->ObjectLimit !=
-            PointerArgumentCount + Factory->ConfigObjectsPerThread ||
+        Slice->ObjectLimit != Factory->ObjectsPerThread ||
         Slice->RelationLimit != Slice->ObjectLimit - 1 || !Slice->ObjectCount ||
         Slice->ObjectCount > Slice->ObjectLimit ||
         Slice->RelationCount > Slice->RelationLimit ||

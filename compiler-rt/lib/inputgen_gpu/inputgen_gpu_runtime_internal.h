@@ -19,8 +19,7 @@ extern "C" {
 #endif
 
 // Initializes or validates this GPU thread's slice and returns object zero.
-void *__ig_prepare_thread(void *Context, uint64_t ArgumentBytes,
-                          uint32_t PointerArgumentCount);
+void *__ig_prepare_thread(void *Context, uint64_t ArgumentBytes);
 // Records one non-void user-function result in the current slice header.
 void __ig_store_result(uint64_t Bits, uint32_t Size);
 // Reports whether the current GPU thread has recorded a callback error.

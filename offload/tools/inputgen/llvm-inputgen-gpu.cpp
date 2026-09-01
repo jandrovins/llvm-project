@@ -113,12 +113,11 @@ cl::opt<uint64_t> ObjectBytesOpt(
     "object-bytes",
     cl::desc("Fixed data capacity for each lazily allocated object"),
     cl::init(DefaultObjectBytes), cl::cat(InputGenGPUCategory));
-cl::opt<uint32_t> ConfigObjectsPerThreadOpt(
-    "config-objects-per-thread",
-    cl::desc("Additional object capacity per GPU thread, including the "
-             "argument object; the final limit also includes one object per "
-             "pointer argument"),
-    cl::init(1), cl::cat(InputGenGPUCategory));
+cl::opt<uint32_t> ObjectsPerThreadOpt(
+    "objects-per-thread",
+    cl::desc("Total object capacity per GPU thread, including the argument "
+             "object"),
+    cl::init(4), cl::cat(InputGenGPUCategory));
 
 template <typename... ArgsTy>
 Error createErr(const char *ErrFmt, ArgsTy &&...Args) {
@@ -163,7 +162,7 @@ Expected<InputGenInvocation> parseInvocation() {
       DeviceIdOpt,
       {NumTeamsOpt > 0 ? NumTeamsOpt.getValue() : 1,
        NumThreadsOpt > 0 ? NumThreadsOpt.getValue() : 1, FactoryBytesOpt,
-       ObjectBytesOpt, ConfigObjectsPerThreadOpt},
+       ObjectBytesOpt, ObjectsPerThreadOpt},
       {},
   };
   if (NumTeamsOpt.getNumOccurrences())
@@ -174,9 +173,8 @@ Expected<InputGenInvocation> parseInvocation() {
     Invocation.ReplayRequest.SliceBytes = FactoryBytesOpt;
   if (ObjectBytesOpt.getNumOccurrences())
     Invocation.ReplayRequest.ObjectBytes = ObjectBytesOpt;
-  if (ConfigObjectsPerThreadOpt.getNumOccurrences())
-    Invocation.ReplayRequest.ConfigObjectsPerThread =
-        ConfigObjectsPerThreadOpt;
+  if (ObjectsPerThreadOpt.getNumOccurrences())
+    Invocation.ReplayRequest.ObjectsPerThread = ObjectsPerThreadOpt;
   return Invocation;
 }
 

@@ -215,7 +215,6 @@ bool createInputGenGPUEntryKernel(Module &M, InstrumentorIRBuilderTy &IIRB,
   const DataLayout &DL = M.getDataLayout();
   SmallVector<ArgumentLayout> Layouts;
   uint64_t ArgumentBytes = 0;
-  uint32_t PointerArgumentCount = 0;
   for (Argument &Arg : EntryFn->args()) {
     Type *Ty = Arg.getType();
     if (Ty->isPointerTy() && Ty->getPointerAddressSpace() != 0) {
@@ -238,8 +237,6 @@ bool createInputGenGPUEntryKernel(Module &M, InstrumentorIRBuilderTy &IIRB,
       return false;
     ArgumentBytes = alignTo(ArgumentBytes, DL.getABITypeAlign(Ty).value());
     ArgumentLayout Layout{&Arg, ArgumentBytes, StoreSize.getFixedValue()};
-    if (Ty->isPointerTy())
-      ++PointerArgumentCount;
     ArgumentBytes += Layout.Size;
     Layouts.push_back(Layout);
   }
@@ -280,12 +277,10 @@ bool createInputGenGPUEntryKernel(Module &M, InstrumentorIRBuilderTy &IIRB,
   FunctionCallee PrepareThread = M.getOrInsertFunction(
       "__ig_prepare_thread",
       FunctionType::get(
-          IIRB.PtrTy,
-          {IIRB.PtrTy, IIRB.Int64Ty, IIRB.Int32Ty}, false));
+          IIRB.PtrTy, {IIRB.PtrTy, IIRB.Int64Ty}, false));
   Value *ArgumentData =
       IRB.CreateCall(PrepareThread,
-                     {Context, ConstantInt::get(IIRB.Int64Ty, ArgumentBytes),
-                      ConstantInt::get(IIRB.Int32Ty, PointerArgumentCount)},
+                     {Context, ConstantInt::get(IIRB.Int64Ty, ArgumentBytes)},
                      "inputgen.arguments");
 
   // A failed slice initialization has no valid argument object. Return before

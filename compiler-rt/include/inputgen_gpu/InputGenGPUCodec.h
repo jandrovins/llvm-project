@@ -26,7 +26,7 @@ struct FactoryConfig {
   uint32_t NumThreads = 1;
   uint64_t SliceBytes = 0;
   uint64_t ObjectBytes = 0;
-  uint32_t ConfigObjectsPerThread = 1;
+  uint32_t ObjectsPerThread = 4;
 };
 
 // A present field means that the user explicitly requested that replay value.
@@ -36,7 +36,7 @@ struct ReplayRequest {
   std::optional<uint32_t> NumThreads;
   std::optional<uint64_t> SliceBytes;
   std::optional<uint64_t> ObjectBytes;
-  std::optional<uint32_t> ConfigObjectsPerThread;
+  std::optional<uint32_t> ObjectsPerThread;
 };
 
 class Error {

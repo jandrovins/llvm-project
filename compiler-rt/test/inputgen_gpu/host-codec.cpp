@@ -38,7 +38,7 @@ int main(int Argc, char **Argv) {
     return fail(GeneratedOrErr);
   Factory Generated = std::move(GeneratedOrErr).value();
 
-  void *Arguments = __ig_prepare_thread(Generated.data(), 8, 1);
+  void *Arguments = __ig_prepare_thread(Generated.data(), 8);
   void *PointerSlot =
       __ig_pre_load(Arguments, 0, 8, 8, INPUTGEN_GPU_VALUE_POINTER);
   void *OldPointer = *reinterpret_cast<void **>(PointerSlot);
@@ -75,7 +75,7 @@ int main(int Argc, char **Argv) {
   if (!ReplayOrErr)
     return fail(ReplayOrErr);
   Factory Replay = std::move(ReplayOrErr).value();
-  Arguments = __ig_prepare_thread(Replay.data(), 8, 1);
+  Arguments = __ig_prepare_thread(Replay.data(), 8);
   PointerSlot = __ig_pre_load(Arguments, 0, 8, 8, INPUTGEN_GPU_VALUE_POINTER);
   void *NewPointer = *reinterpret_cast<void **>(PointerSlot);
   Value = static_cast<int *>(

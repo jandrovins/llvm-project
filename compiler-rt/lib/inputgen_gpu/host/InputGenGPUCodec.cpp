@@ -100,12 +100,12 @@ Error validateConfig(const FactoryConfig &Config) {
       Config.ObjectBytes > std::numeric_limits<uint32_t>::max())
     return makeError("object bytes must be a nonzero value no greater than %u",
                      std::numeric_limits<uint32_t>::max());
-  if (!Config.ConfigObjectsPerThread)
+  if (!Config.ObjectsPerThread)
     return Error("configured objects per GPU thread must be nonzero");
   uint64_t MinimumTableBytes =
       alignTo(sizeof(InputGenGPUFactorySliceHeader), 8) +
-      uint64_t(Config.ConfigObjectsPerThread) * sizeof(uint64_t) +
-      uint64_t(Config.ConfigObjectsPerThread - 1) *
+      uint64_t(Config.ObjectsPerThread) * sizeof(uint64_t) +
+      uint64_t(Config.ObjectsPerThread - 1) *
           sizeof(InputGenGPUFactoryPointerRelation);
   if (MinimumTableBytes > Config.SliceBytes)
     return Error("configured object tables do not fit in each GPU thread's "
@@ -142,7 +142,7 @@ Error validateThreadLayout(const InputThread &Thread, uint64_t SliceBytes,
 
 FactoryConfig configFromHeader(const InputGenGPUInputFileHeader &Header) {
   return FactoryConfig{Header.NumTeams,  Header.NumThreads, Header.SliceBytes,
-                       Header.ObjectBytes, Header.ConfigObjectsPerThread};
+                       Header.ObjectBytes, Header.ObjectsPerThread};
 }
 
 void initializeFactoryHeader(std::vector<uint8_t> &Bytes,
@@ -154,7 +154,7 @@ void initializeFactoryHeader(std::vector<uint8_t> &Bytes,
   Header->NumTeams = Config.NumTeams;
   Header->ThreadsPerTeam = Config.NumThreads;
   Header->NumLanes = Config.NumTeams * Config.NumThreads;
-  Header->ConfigObjectsPerThread = Config.ConfigObjectsPerThread;
+  Header->ObjectsPerThread = Config.ObjectsPerThread;
   Header->SliceBytes = Config.SliceBytes;
   Header->ObjectBytes = Config.ObjectBytes;
   Header->FactoryBytes = Bytes.size();
@@ -233,8 +233,8 @@ Result<Record> readRecord(const std::string &Filename) {
       getNumThreads(Storage.Header.NumTeams, Storage.Header.NumThreads);
   if (!Threads || Threads.value() != Storage.Header.NumLanes ||
       !Storage.Header.SliceBytes || !Storage.Header.ObjectBytes ||
-      !Storage.Header.ConfigObjectsPerThread ||
-      Storage.Header.ObjectLimit < Storage.Header.ConfigObjectsPerThread ||
+      !Storage.Header.ObjectsPerThread ||
+      Storage.Header.ObjectLimit != Storage.Header.ObjectsPerThread ||
       Storage.Header.RelationLimit + 1 != Storage.Header.ObjectLimit ||
       Storage.Header.ResultStride != ResultStride)
     return makeError("invalid InputGen data file '%s'", Filename.c_str());
@@ -306,7 +306,7 @@ Result<Record> serializeFactory(const Factory &Value) {
                      Config.NumTeams,
                      Config.NumThreads,
                      NumThreads.value(),
-                     Config.ConfigObjectsPerThread,
+                     Config.ObjectsPerThread,
                      0,
                      0,
                      Config.SliceBytes,
@@ -347,7 +347,7 @@ Result<Record> serializeFactory(const Factory &Value) {
       return makeError("device GPU thread %u has inconsistent pointer "
                        "relations",
                        ThreadIndex);
-    if (Slice->ObjectLimit < Config.ConfigObjectsPerThread)
+    if (Slice->ObjectLimit != Config.ObjectsPerThread)
       return makeError("device GPU thread %u has invalid object capacity",
                        ThreadIndex);
     if (ThreadIndex == 0) {
@@ -446,9 +446,8 @@ Result<Factory> createReplayFactory(const std::string &Filename,
        *Request.SliceBytes != Storage.Header.SliceBytes) ||
       (Request.ObjectBytes &&
        *Request.ObjectBytes != Storage.Header.ObjectBytes) ||
-      (Request.ConfigObjectsPerThread &&
-       *Request.ConfigObjectsPerThread !=
-           Storage.Header.ConfigObjectsPerThread))
+      (Request.ObjectsPerThread &&
+       *Request.ObjectsPerThread != Storage.Header.ObjectsPerThread))
     return Error("replay options conflict with the InputGen data file");
 
   FactoryConfig Config = configFromHeader(Storage.Header);
