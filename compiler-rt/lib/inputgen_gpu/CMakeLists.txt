@@ -30,8 +30,7 @@ endif()
 # keeps the sources available to regular compiler-rt build machinery.
 
 set(INPUTGEN_GPU_SOURCES
-  inputgen_gpu_runtime_state.c
-  inputgen_gpu_runtime_callbacks.c)
+  inputgen_gpu_runtime_state.c)
 set(INPUTGEN_GPU_HEADERS
   inputgen_gpu_factory.h
   inputgen_gpu_instrumentor_abi.h

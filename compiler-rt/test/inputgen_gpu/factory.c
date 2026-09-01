@@ -1,6 +1,6 @@
 // Verify lazy pointer-slot creation and replay reconstruction.
-// RUN: %inputgen-gpu-cc -I%inputgen-gpu-src %inputgen-gpu-src/inputgen_gpu_runtime_state.c \
-// RUN:   %inputgen-gpu-src/inputgen_gpu_runtime_callbacks.c %s -o %t
+// RUN: %inputgen-gpu-cc -I%inputgen-gpu-src \
+// RUN:   %inputgen-gpu-src/inputgen_gpu_runtime_state.c %s -o %t
 // RUN: %t | FileCheck %s
 // REQUIRES: inputgen-gpu-host-test
 

@@ -1,8 +1,8 @@
 // Verify a callback error returns aligned fallback storage instead of the
 // invalid address that the immediately following instrumented access would
 // dereference.
-// RUN: %inputgen-gpu-cc -I%inputgen-gpu-src %inputgen-gpu-src/inputgen_gpu_runtime_state.c \
-// RUN:   %inputgen-gpu-src/inputgen_gpu_runtime_callbacks.c %s -o %t
+// RUN: %inputgen-gpu-cc -I%inputgen-gpu-src \
+// RUN:   %inputgen-gpu-src/inputgen_gpu_runtime_state.c %s -o %t
 // RUN: %t | FileCheck %s
 // REQUIRES: inputgen-gpu-host-test
 

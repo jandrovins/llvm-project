@@ -1,11 +1,9 @@
 // Verify the compiler-rt host codec without requiring GPU hardware.
 // RUN: %inputgen-gpu-cc -std=c11 -I%inputgen-gpu-src -c \
-// RUN:   %inputgen-gpu-src/inputgen_gpu_runtime_state.c -o %t.state.o
-// RUN: %inputgen-gpu-cc -std=c11 -I%inputgen-gpu-src -c \
-// RUN:   %inputgen-gpu-src/inputgen_gpu_runtime_callbacks.c -o %t.callbacks.o
+// RUN:   %inputgen-gpu-src/inputgen_gpu_runtime_state.c -o %t.runtime.o
 // RUN: %inputgen-gpu-cxx -std=c++17 -I%inputgen-gpu-include \
 // RUN:   -I%inputgen-gpu-src %inputgen-gpu-src/host/InputGenGPUCodec.cpp \
-// RUN:   %s %t.state.o %t.callbacks.o -o %t
+// RUN:   %s %t.runtime.o -o %t
 // RUN: %t %t.inputgen %t.bad | FileCheck %s
 // REQUIRES: inputgen-gpu-host-test
 
