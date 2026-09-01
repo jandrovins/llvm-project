@@ -210,126 +210,116 @@ Result<Factory> createGenerationFactory(const FactoryConfig &RequestedConfig) {
 }
 
 Error writeRecord(const std::string &Filename, const Record &Value) {
-  FILE *File = std::fopen(Filename.c_str(), "wb");
-  if (!File)
+  FILE *RawFile = std::fopen(Filename.c_str(), "wb");
+  if (!RawFile)
     return makeError("failed to open generated data file '%s'",
                      Filename.c_str());
+  std::unique_ptr<FILE, int (*)(FILE *)> File(RawFile, &std::fclose);
 
   const Record::Impl &Storage = CodecAccess::record(Value);
-  Error Failure = writeValue(File, Storage.Header);
+  if (Error Failure = writeValue(File.get(), Storage.Header))
+    return Failure;
   for (const InputThread &Thread : Storage.Threads) {
     InputGenGPUInputFileLaneHeader ThreadHeader{
         static_cast<uint32_t>(Thread.Objects.size()),
         static_cast<uint32_t>(Thread.Relations.size())};
-    if (!Failure)
-      Failure = writeValue(File, ThreadHeader);
+    if (Error Failure = writeValue(File.get(), ThreadHeader))
+      return Failure;
     for (const InputObject &Object : Thread.Objects) {
       InputGenGPUInputFileObjectHeader ObjectHeader{
           Object.Capacity, static_cast<uint32_t>(Object.Runs.size())};
-      if (!Failure)
-        Failure = writeValue(File, ObjectHeader);
+      if (Error Failure = writeValue(File.get(), ObjectHeader))
+        return Failure;
       for (const InputRun &Run : Object.Runs) {
         InputGenGPUInputFileRunHeader RunHeader{
             Run.Offset, static_cast<uint32_t>(Run.Bytes.size())};
-        if (!Failure)
-          Failure = writeValue(File, RunHeader);
-        if (!Failure && !Run.Bytes.empty() &&
-            std::fwrite(Run.Bytes.data(), 1, Run.Bytes.size(), File) !=
+        if (Error Failure = writeValue(File.get(), RunHeader))
+          return Failure;
+        if (!Run.Bytes.empty() &&
+            std::fwrite(Run.Bytes.data(), 1, Run.Bytes.size(), File.get()) !=
                 Run.Bytes.size())
-          Failure = Error("failed to write InputGen data");
+          return Error("failed to write InputGen data");
       }
     }
     for (const InputGenGPUInputFileRelation &Relation : Thread.Relations)
-      if (!Failure)
-        Failure = writeValue(File, Relation);
+      if (Error Failure = writeValue(File.get(), Relation))
+        return Failure;
   }
-  if (std::fclose(File) != 0 && !Failure)
-    Failure = Error("failed to close generated InputGen data");
-  return Failure;
+  if (std::fclose(File.release()) != 0)
+    return Error("failed to close generated InputGen data");
+  return Error();
 }
 
 Result<Record> readRecord(const std::string &Filename) {
-  FILE *File = std::fopen(Filename.c_str(), "rb");
-  if (!File)
+  FILE *RawFile = std::fopen(Filename.c_str(), "rb");
+  if (!RawFile)
     return makeError("failed to open replay data file '%s'", Filename.c_str());
+  std::unique_ptr<FILE, int (*)(FILE *)> File(RawFile, &std::fclose);
 
   auto Storage = std::make_unique<Record::Impl>();
-  Error Failure = readValue(File, Storage->Header);
-  if (!Failure && (Storage->Header.Magic != INPUTGEN_GPU_INPUT_MAGIC ||
-                   Storage->Header.Version != INPUTGEN_GPU_FACTORY_VERSION))
-    Failure =
-        makeError("unsupported InputGen data file '%s'", Filename.c_str());
-  if (!Failure) {
-    Result<uint32_t> Threads =
-        getNumThreads(Storage->Header.NumTeams, Storage->Header.NumThreads);
-    if (!Threads || Threads.value() != Storage->Header.NumLanes ||
-        !Storage->Header.SliceBytes || !Storage->Header.ObjectBytes ||
-        !Storage->Header.ConfigObjectsPerThread ||
-        Storage->Header.ObjectLimit < Storage->Header.ConfigObjectsPerThread ||
-        Storage->Header.RelationLimit + 1 != Storage->Header.ObjectLimit ||
-        Storage->Header.ResultStride != ResultStride)
-      Failure = makeError("invalid InputGen data file '%s'", Filename.c_str());
-  }
+  if (Error Failure = readValue(File.get(), Storage->Header))
+    return Failure;
+  if (Storage->Header.Magic != INPUTGEN_GPU_INPUT_MAGIC ||
+      Storage->Header.Version != INPUTGEN_GPU_FACTORY_VERSION)
+    return makeError("unsupported InputGen data file '%s'", Filename.c_str());
+  Result<uint32_t> Threads =
+      getNumThreads(Storage->Header.NumTeams, Storage->Header.NumThreads);
+  if (!Threads || Threads.value() != Storage->Header.NumLanes ||
+      !Storage->Header.SliceBytes || !Storage->Header.ObjectBytes ||
+      !Storage->Header.ConfigObjectsPerThread ||
+      Storage->Header.ObjectLimit < Storage->Header.ConfigObjectsPerThread ||
+      Storage->Header.RelationLimit + 1 != Storage->Header.ObjectLimit ||
+      Storage->Header.ResultStride != ResultStride)
+    return makeError("invalid InputGen data file '%s'", Filename.c_str());
 
-  if (!Failure)
-    Storage->Threads.resize(Storage->Header.NumLanes);
+  Storage->Threads.resize(Storage->Header.NumLanes);
   for (InputThread &Thread : Storage->Threads) {
     InputGenGPUInputFileLaneHeader ThreadHeader{};
-    if (!Failure)
-      Failure = readValue(File, ThreadHeader);
-    if (!Failure && !ThreadHeader.ObjectCount)
-      Failure = makeError("invalid InputGen data file '%s'", Filename.c_str());
-    if (!Failure) {
-      Thread.Objects.resize(ThreadHeader.ObjectCount);
-      Thread.Relations.resize(ThreadHeader.RelationCount);
-    }
+    if (Error Failure = readValue(File.get(), ThreadHeader))
+      return Failure;
+    if (!ThreadHeader.ObjectCount)
+      return makeError("invalid InputGen data file '%s'", Filename.c_str());
+    Thread.Objects.resize(ThreadHeader.ObjectCount);
+    Thread.Relations.resize(ThreadHeader.RelationCount);
     for (size_t ObjectIndex = 0; ObjectIndex < Thread.Objects.size();
          ++ObjectIndex) {
       InputObject &Object = Thread.Objects[ObjectIndex];
       InputGenGPUInputFileObjectHeader ObjectHeader{};
-      if (!Failure)
-        Failure = readValue(File, ObjectHeader);
-      if (!Failure && !ObjectHeader.Capacity && ObjectIndex != 0)
-        Failure =
-            makeError("invalid InputGen data file '%s'", Filename.c_str());
-      if (!Failure) {
-        Object.Capacity = ObjectHeader.Capacity;
-        Object.Runs.resize(ObjectHeader.NumRuns);
-      }
+      if (Error Failure = readValue(File.get(), ObjectHeader))
+        return Failure;
+      if (!ObjectHeader.Capacity && ObjectIndex != 0)
+        return makeError("invalid InputGen data file '%s'", Filename.c_str());
+      Object.Capacity = ObjectHeader.Capacity;
+      Object.Runs.resize(ObjectHeader.NumRuns);
       uint32_t PreviousEnd = 0;
       for (InputRun &Run : Object.Runs) {
         InputGenGPUInputFileRunHeader RunHeader{};
-        if (!Failure)
-          Failure = readValue(File, RunHeader);
-        if (!Failure && (RunHeader.Offset > Object.Capacity ||
-                         RunHeader.Size > Object.Capacity - RunHeader.Offset ||
-                         RunHeader.Offset < PreviousEnd))
-          Failure =
-              makeError("invalid InputGen data file '%s'", Filename.c_str());
-        if (!Failure) {
-          Run.Offset = RunHeader.Offset;
-          Run.Bytes.resize(RunHeader.Size);
-          if (RunHeader.Size && std::fread(Run.Bytes.data(), 1, RunHeader.Size,
-                                           File) != RunHeader.Size)
-            Failure = Error("failed to read InputGen data");
-          PreviousEnd = RunHeader.Offset + RunHeader.Size;
-        }
+        if (Error Failure = readValue(File.get(), RunHeader))
+          return Failure;
+        if (RunHeader.Offset > Object.Capacity ||
+            RunHeader.Size > Object.Capacity - RunHeader.Offset ||
+            RunHeader.Offset < PreviousEnd)
+          return makeError("invalid InputGen data file '%s'", Filename.c_str());
+        Run.Offset = RunHeader.Offset;
+        Run.Bytes.resize(RunHeader.Size);
+        if (RunHeader.Size && std::fread(Run.Bytes.data(), 1, RunHeader.Size,
+                                         File.get()) != RunHeader.Size)
+          return Error("failed to read InputGen data");
+        PreviousEnd = RunHeader.Offset + RunHeader.Size;
       }
     }
     for (InputGenGPUInputFileRelation &Relation : Thread.Relations)
-      if (!Failure)
-        Failure = readValue(File, Relation);
-    if (!Failure)
-      Failure = validateThreadLayout(Thread, Storage->Header.SliceBytes,
-                                     Storage->Header.ObjectLimit,
-                                     Storage->Header.RelationLimit);
+      if (Error Failure = readValue(File.get(), Relation))
+        return Failure;
+    if (Error Failure =
+            validateThreadLayout(Thread, Storage->Header.SliceBytes,
+                                 Storage->Header.ObjectLimit,
+                                 Storage->Header.RelationLimit))
+      return Failure;
   }
-  if (!Failure && std::fgetc(File) != EOF)
-    Failure = makeError("invalid trailing data in InputGen data file '%s'",
-                        Filename.c_str());
-  std::fclose(File);
-  if (Failure)
-    return Failure;
+  if (std::fgetc(File.get()) != EOF)
+    return makeError("invalid trailing data in InputGen data file '%s'",
+                     Filename.c_str());
   return CodecAccess::makeRecord(std::move(Storage));
 }
 
