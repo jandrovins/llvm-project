@@ -20,7 +20,6 @@
 #include "llvm/Frontend/Offloading/Utility.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
-#include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/WithColor.h"
@@ -29,7 +28,6 @@
 #include <cinttypes>
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <string>
 #include <utility>
 
@@ -92,14 +90,12 @@ cl::opt<std::string> ModeArg(cl::Positional, cl::desc("<generate|replay>"),
                              cl::Required, cl::cat(InputGenGPUCategory));
 cl::opt<std::string> ImageFilename(cl::Positional, cl::desc("<image>"),
                                    cl::Required, cl::cat(InputGenGPUCategory));
-cl::opt<std::string> JsonFilename(cl::Positional, cl::desc("<record.json>"),
-                                  cl::Required, cl::cat(InputGenGPUCategory));
 cl::opt<std::string> InputGenDataFilename(
     "inputgen-data",
     cl::desc("Binary file used to write generated input and read replay input"),
     cl::init(""), cl::cat(InputGenGPUCategory));
-cl::opt<int32_t> DeviceIdOpt("device-id", cl::desc("Override JSON DeviceId"),
-                             cl::init(-1), cl::cat(InputGenGPUCategory));
+cl::opt<int32_t> DeviceIdOpt("device-id", cl::desc("Select the target device"),
+                             cl::init(0), cl::cat(InputGenGPUCategory));
 cl::opt<uint32_t>
     NumTeamsOpt("num-teams",
                 cl::desc("Override the default one-team launch geometry"),
@@ -139,17 +135,8 @@ Error convertResultError(const inputgen_gpu::Result<T> &Failure) {
   return convertError(Failure.error());
 }
 
-template <typename T>
-Error getInteger(const json::Object *Obj, StringRef Key, T &Result) {
-  std::optional<int64_t> OptInt = Obj->getInteger(Key);
-  if (!OptInt)
-    return createErr("failed to read JSON integer %s", Key.data());
-  Result = static_cast<T>(*OptInt);
-  return Error::success();
-}
-
-std::string getDefaultInputGenDataFilename(StringRef JsonPath) {
-  SmallString<256> Path(JsonPath);
+std::string getDefaultInputGenDataFilename(StringRef ImagePath) {
+  SmallString<256> Path(ImagePath);
   sys::path::replace_extension(Path, "inputgen");
   return std::string(Path);
 }
@@ -168,28 +155,12 @@ Expected<InputGenInvocation> parseInvocation() {
   if (!ModeOrErr)
     return ModeOrErr.takeError();
 
-  auto JsonBufferOrErr = MemoryBuffer::getFile(JsonFilename, /*IsText=*/true,
-                                               /*RequiresNullTerminator=*/true);
-  if (!JsonBufferOrErr)
-    return createErr("failed to read JSON file '%s'", JsonFilename.c_str());
-  Expected<json::Value> JsonValueOrErr =
-      json::parse(JsonBufferOrErr.get()->getBuffer());
-  if (!JsonValueOrErr)
-    return JsonValueOrErr.takeError();
-  const json::Object *JsonObj = JsonValueOrErr->getAsObject();
-  if (!JsonObj)
-    return createErr("invalid JSON file '%s'", JsonFilename.c_str());
-
-  int32_t JsonDeviceId = 0;
-  if (Error Err = getInteger(JsonObj, "DeviceId", JsonDeviceId))
-    return std::move(Err);
-
   InputGenInvocation Invocation{
       *ModeOrErr,
       InputGenDataFilename.empty()
-          ? getDefaultInputGenDataFilename(JsonFilename)
+          ? getDefaultInputGenDataFilename(ImageFilename)
           : InputGenDataFilename.getValue(),
-      DeviceIdOpt >= 0 ? DeviceIdOpt : JsonDeviceId,
+      DeviceIdOpt,
       {NumTeamsOpt > 0 ? NumTeamsOpt.getValue() : 1,
        NumThreadsOpt > 0 ? NumThreadsOpt.getValue() : 1, FactoryBytesOpt,
        ObjectBytesOpt, ConfigObjectsPerThreadOpt},
@@ -383,7 +354,7 @@ int main(int Argc, char **Argv) {
   cl::HideUnrelatedOptions(InputGenGPUCategory);
   cl::ParseCommandLineOptions(
       Argc, Argv,
-      "Launch an InputGen GPU entry kernel from an image and record JSON\n");
+      "Launch an InputGen GPU entry kernel from a device image\n");
 
   if (Error Err = runInputGenGPU()) {
     WithColor::error(errs(), TOOL_NAME) << toString(std::move(Err)) << "\n";
