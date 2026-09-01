@@ -8,6 +8,8 @@
 static __attribute__((address_space(1))) uint64_t FactoryContextBits;
 
 static uint64_t alignTo(uint64_t Value, uint64_t Alignment);
+static int getFixedSliceBytes(uint64_t ObjectBytes, uint32_t ObjectsPerThread,
+                              uint64_t *SliceBytes);
 
 // Recover the launch-wide factory selected by this GPU thread's entry wrapper.
 static InputGenGPUFactoryHeader *currentFactory(void) {
@@ -33,13 +35,17 @@ getCurrentSlice(InputGenGPUFactoryHeader *Factory, uint64_t *ThreadIndex) {
       WorkgroupIndex > (UINT64_MAX - WorkitemIndex) / Factory->ThreadsPerTeam)
     return 0;
   uint64_t Index = WorkgroupIndex * Factory->ThreadsPerTeam + WorkitemIndex;
-  if (Index >= Factory->NumLanes)
+  if (Index >= Factory->NumGPUThreads)
+    return 0;
+  uint64_t SliceBytes = 0;
+  if (!getFixedSliceBytes(Factory->ObjectBytes, Factory->ObjectsPerThread,
+                          &SliceBytes))
     return 0;
   if (ThreadIndex)
     *ThreadIndex = Index;
   return (InputGenGPUFactorySliceHeader *)((char *)Factory +
                                            alignTo(sizeof(*Factory), 8) +
-                                           Index * Factory->SliceBytes);
+                                           Index * SliceBytes);
 }
 
 static InputGenGPUFactorySliceHeader *currentSlice(void) {
@@ -50,19 +56,19 @@ static uint64_t alignTo(uint64_t Value, uint64_t Alignment) {
   return (Value + Alignment - 1) & ~(Alignment - 1);
 }
 
-static int getFixedSliceBytes(uint64_t ObjectBytes, uint32_t ObjectLimit,
+static int getFixedSliceBytes(uint64_t ObjectBytes, uint32_t ObjectsPerThread,
                               uint64_t *SliceBytes) {
   if (!ObjectBytes || ObjectBytes > UINT32_MAX || (ObjectBytes & 7) ||
-      !ObjectLimit)
+      !ObjectsPerThread)
     return 0;
-  uint64_t RelationBytes =
-      (uint64_t)(ObjectLimit - 1) * sizeof(InputGenGPUFactoryPointerRelation);
+  uint64_t RelationBytes = (uint64_t)(ObjectsPerThread - 1) *
+                           sizeof(InputGenGPUFactoryPointerRelation);
   uint64_t ObjectOffset = alignTo(
       alignTo(sizeof(InputGenGPUFactorySliceHeader), 8) + RelationBytes, 8);
   uint64_t SlotBytes = 3 * ObjectBytes;
-  if ((uint64_t)ObjectLimit > (UINT64_MAX - ObjectOffset) / SlotBytes)
+  if ((uint64_t)ObjectsPerThread > (UINT64_MAX - ObjectOffset) / SlotBytes)
     return 0;
-  *SliceBytes = ObjectOffset + (uint64_t)ObjectLimit * SlotBytes;
+  *SliceBytes = ObjectOffset + (uint64_t)ObjectsPerThread * SlotBytes;
   return 1;
 }
 
@@ -79,19 +85,20 @@ static int rangeInSlice(uint64_t Offset, uint64_t Size, uint64_t SliceBytes) {
 static InputGenGPUFactoryPointerRelation *
 relationTable(InputGenGPUFactorySliceHeader *Slice) {
   return (InputGenGPUFactoryPointerRelation *)((char *)Slice +
-                                               Slice->RelationTableOffset);
+                                               alignTo(sizeof(*Slice), 8));
 }
 
 static uint64_t objectStorageOffset(InputGenGPUFactorySliceHeader *Slice) {
-  return alignTo(Slice->RelationTableOffset +
-                     (uint64_t)Slice->RelationLimit *
+  return alignTo(alignTo(sizeof(*Slice), 8) +
+                     (uint64_t)(currentFactory()->ObjectsPerThread - 1) *
                          sizeof(InputGenGPUFactoryPointerRelation),
                  8);
 }
 
 static uint64_t objectCapacity(InputGenGPUFactorySliceHeader *Slice,
                                uint32_t ObjectIndex) {
-  return ObjectIndex == 0 ? Slice->ArgumentBytes : Slice->ObjectBytes;
+  return ObjectIndex == 0 ? Slice->ArgumentBytes
+                          : currentFactory()->ObjectBytes;
 }
 
 static char *getObject(InputGenGPUFactorySliceHeader *Slice,
@@ -101,9 +108,13 @@ static char *getObject(InputGenGPUFactorySliceHeader *Slice,
     setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_LAYOUT);
     return 0;
   }
-  uint64_t SlotBytes = 3 * Slice->ObjectBytes;
+  uint64_t ObjectBytes = currentFactory()->ObjectBytes;
+  uint64_t SlotBytes = 3 * ObjectBytes;
   uint64_t Offset = objectStorageOffset(Slice) + ObjectIndex * SlotBytes;
-  if (!rangeInSlice(Offset, SlotBytes, currentFactory()->SliceBytes)) {
+  uint64_t SliceBytes = 0;
+  if (!getFixedSliceBytes(ObjectBytes, currentFactory()->ObjectsPerThread,
+                          &SliceBytes) ||
+      !rangeInSlice(Offset, SlotBytes, SliceBytes)) {
     setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_LAYOUT);
     return 0;
   }
@@ -113,7 +124,8 @@ static char *getObject(InputGenGPUFactorySliceHeader *Slice,
 static char *allocateObject(InputGenGPUFactorySliceHeader *Slice,
                             uint32_t ObjectIndex) {
   // Make the next preallocated slot logically live without growing the slice.
-  if (ObjectIndex != Slice->ObjectCount || ObjectIndex >= Slice->ObjectLimit) {
+  if (ObjectIndex != Slice->ObjectCount ||
+      ObjectIndex >= currentFactory()->ObjectsPerThread) {
     setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_CAPACITY);
     return 0;
   }
@@ -126,9 +138,9 @@ void *__ig_prepare_thread(void *Context, uint64_t ArgumentBytes) {
   uint64_t ExpectedSliceBytes = 0;
   if (!Factory || Factory->Magic != INPUTGEN_GPU_FACTORY_SLICE_MAGIC ||
       Factory->Version != INPUTGEN_GPU_FACTORY_VERSION ||
+      !Factory->ThreadsPerTeam || !Factory->NumGPUThreads ||
       !getFixedSliceBytes(Factory->ObjectBytes, Factory->ObjectsPerThread,
                           &ExpectedSliceBytes) ||
-      Factory->SliceBytes != ExpectedSliceBytes ||
       ArgumentBytes > Factory->ObjectBytes)
     return 0;
   FactoryContextBits = (uint64_t)(uintptr_t)Factory;
@@ -139,21 +151,16 @@ void *__ig_prepare_thread(void *Context, uint64_t ArgumentBytes) {
 
   if (Factory->Mode == INPUTGEN_MODE_GENERATE) {
     // Initialize tables and object zero; pointer loads allocate later objects.
-    __builtin_memset(Slice, 0, Factory->SliceBytes);
+    __builtin_memset(Slice, 0, ExpectedSliceBytes);
     Slice->Magic = INPUTGEN_GPU_FACTORY_SLICE_MAGIC;
     Slice->Version = INPUTGEN_GPU_FACTORY_VERSION;
-    Slice->Mode = Factory->Mode;
     Slice->SliceIndex = (uint32_t)ThreadIndex;
-    Slice->ObjectLimit = Factory->ObjectsPerThread;
-    Slice->RelationLimit = Slice->ObjectLimit - 1;
     Slice->ArgumentBytes = ArgumentBytes;
-    Slice->ObjectBytes = Factory->ObjectBytes;
-    Slice->RelationTableOffset = alignTo(sizeof(*Slice), 8);
     uint64_t ObjectStorageOffset = objectStorageOffset(Slice);
     uint64_t ObjectStorageBytes =
-        (uint64_t)Slice->ObjectLimit * 3 * Slice->ObjectBytes;
+        (uint64_t)Factory->ObjectsPerThread * 3 * Factory->ObjectBytes;
     if (!rangeInSlice(ObjectStorageOffset, ObjectStorageBytes,
-                      Factory->SliceBytes)) {
+                      ExpectedSliceBytes)) {
       setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_CAPACITY);
       return 0;
     }
@@ -164,25 +171,21 @@ void *__ig_prepare_thread(void *Context, uint64_t ArgumentBytes) {
     if (Slice->Magic != INPUTGEN_GPU_FACTORY_SLICE_MAGIC ||
         Slice->Version != INPUTGEN_GPU_FACTORY_VERSION ||
         Slice->SliceIndex != ThreadIndex ||
-        Slice->ArgumentBytes != ArgumentBytes ||
-        Slice->ObjectBytes != Factory->ObjectBytes ||
-        Slice->ObjectLimit != Factory->ObjectsPerThread ||
-        Slice->RelationLimit != Slice->ObjectLimit - 1 || !Slice->ObjectCount ||
-        Slice->ObjectCount > Slice->ObjectLimit ||
-        Slice->RelationCount > Slice->RelationLimit ||
+        Slice->ArgumentBytes != ArgumentBytes || !Slice->ObjectCount ||
+        Slice->ObjectCount > Factory->ObjectsPerThread ||
+        Slice->RelationCount >= Factory->ObjectsPerThread ||
         Slice->RelationCount + 1 != Slice->ObjectCount ||
-        Slice->RelationTableOffset != alignTo(sizeof(*Slice), 8) ||
-        !rangeInSlice(Slice->RelationTableOffset,
-                      (uint64_t)Slice->RelationLimit *
+        !rangeInSlice(alignTo(sizeof(*Slice), 8),
+                      (uint64_t)(Factory->ObjectsPerThread - 1) *
                           sizeof(InputGenGPUFactoryPointerRelation),
-                      Factory->SliceBytes) ||
+                      ExpectedSliceBytes) ||
         !rangeInSlice(objectStorageOffset(Slice),
-                      (uint64_t)Slice->ObjectLimit * 3 * Slice->ObjectBytes,
-                      Factory->SliceBytes)) {
+                      (uint64_t)Factory->ObjectsPerThread * 3 *
+                          Factory->ObjectBytes,
+                      ExpectedSliceBytes)) {
       setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_LAYOUT);
       return 0;
     }
-    Slice->Mode = Factory->Mode;
   } else {
     return 0;
   }
@@ -236,7 +239,10 @@ static char *findObject(void *Pointer, int32_t PointerAS, int64_t Size,
 
   uintptr_t Address = (uintptr_t)Pointer;
   uintptr_t SliceBegin = (uintptr_t)Slice;
-  uint64_t SliceBytes = currentFactory()->SliceBytes;
+  uint64_t SliceBytes = 0;
+  if (!getFixedSliceBytes(currentFactory()->ObjectBytes,
+                          currentFactory()->ObjectsPerThread, &SliceBytes))
+    return 0;
   if (Address >= SliceBegin && Address - SliceBegin < SliceBytes)
     *IsFactoryAddress = 1;
 
@@ -299,7 +305,7 @@ void *__ig_pre_load(void *Pointer, int32_t PointerAS, int64_t ValueSize,
     return IsFactoryAddress ? failureAddress(Slice, Pointer) : Pointer;
 
   char *Data = Object;
-  unsigned char *Mask = (unsigned char *)(Data + Slice->ObjectBytes);
+  unsigned char *Mask = (unsigned char *)(Data + currentFactory()->ObjectBytes);
   if (ValueTypeId == INPUTGEN_GPU_VALUE_POINTER) {
     // Pointer slots record object relationships, never a serialized address.
     if (ValueSize != (int64_t)sizeof(void *)) {
@@ -310,11 +316,11 @@ void *__ig_pre_load(void *Pointer, int32_t PointerAS, int64_t ValueSize,
         findRelation(Slice, Owner, Offset);
     if (!Relation) {
       // Generation reserves the target object; replay requires its relation.
-      if (Slice->Mode != INPUTGEN_MODE_GENERATE) {
+      if (currentFactory()->Mode != INPUTGEN_MODE_GENERATE) {
         setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_REPLAY);
         return failureAddress(Slice, Pointer);
       }
-      if (Slice->RelationCount == Slice->RelationLimit) {
+      if (Slice->RelationCount + 1 >= currentFactory()->ObjectsPerThread) {
         setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_CAPACITY);
         return failureAddress(Slice, Pointer);
       }
@@ -347,7 +353,7 @@ void *__ig_pre_load(void *Pointer, int32_t PointerAS, int64_t ValueSize,
     unsigned char State = Mask[Offset + I];
     if (State & (INPUTGEN_GPU_MASK_READ | INPUTGEN_GPU_MASK_WRITTEN))
       continue;
-    if (Slice->Mode == INPUTGEN_MODE_REPLAY) {
+    if (currentFactory()->Mode == INPUTGEN_MODE_REPLAY) {
       setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_REPLAY);
       return failureAddress(Slice, Pointer);
     }
@@ -372,8 +378,8 @@ void *__ig_pre_store(void *Pointer, int32_t PointerAS, int64_t ValueSize,
   if (!Object)
     return IsFactoryAddress ? failureAddress(Slice, Pointer) : Pointer;
   char *Data = Object;
-  unsigned char *Mask = (unsigned char *)(Data + Slice->ObjectBytes);
-  char *Saved = (char *)(Mask + Slice->ObjectBytes);
+  unsigned char *Mask = (unsigned char *)(Data + currentFactory()->ObjectBytes);
+  char *Saved = (char *)(Mask + currentFactory()->ObjectBytes);
   // Preserve input before its first overwrite so serialization keeps the read.
   for (uint32_t I = 0; I < (uint32_t)ValueSize; ++I) {
     unsigned char State = Mask[Offset + I];

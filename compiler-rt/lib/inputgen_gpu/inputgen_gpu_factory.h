@@ -18,7 +18,7 @@
 
 #include <stdint.h>
 
-#define INPUTGEN_GPU_FACTORY_VERSION 4u
+#define INPUTGEN_GPU_FACTORY_VERSION 5u
 #define INPUTGEN_GPU_FACTORY_SLICE_MAGIC 0x4947534Cu
 #define INPUTGEN_GPU_INPUT_MAGIC 0x494750554F424A31ULL
 
@@ -40,14 +40,11 @@ typedef struct InputGenGPUFactoryHeader {
   uint32_t Magic;
   uint32_t Version;
   uint32_t Mode;
-  uint32_t NumTeams;
   uint32_t ThreadsPerTeam;
-  uint32_t NumLanes;
+  uint32_t NumGPUThreads;
   // Total per-GPU-thread object capacity, including argument object zero.
   uint32_t ObjectsPerThread;
-  uint64_t SliceBytes;
   uint64_t ObjectBytes;
-  uint64_t FactoryBytes;
 } InputGenGPUFactoryHeader;
 
 // Connects one pointer slot to a target object without recording an address.
@@ -71,57 +68,37 @@ enum {
 typedef struct InputGenGPUFactorySliceHeader {
   uint32_t Magic;
   uint32_t Version;
-  uint32_t Mode;
   uint32_t Error;
   uint32_t SliceIndex;
   uint32_t ObjectCount;
-  uint32_t ObjectLimit;
   uint32_t RelationCount;
-  uint32_t RelationLimit;
-  uint32_t Reserved;
   uint64_t ArgumentBytes;
-  uint64_t ObjectBytes;
-  uint64_t RelationTableOffset;
   uint64_t ResultBits;
   // Aligned fallback storage returned after a callback error so the rewritten
   // immediate access can complete and the launcher can report the error.
   uint64_t ErrorScratch;
   uint32_t ResultSize;
-  uint32_t ResultReserved;
 } InputGenGPUFactorySliceHeader;
 
 // Begins the sparse on-disk input record and fixes replay-compatible geometry.
 typedef struct InputGenGPUInputFileHeader {
   uint64_t Magic;
+  uint64_t ObjectBytes;
+  uint64_t ArgumentBytes;
   uint32_t Version;
   uint32_t NumTeams;
   uint32_t NumThreads;
-  uint32_t NumLanes;
   uint32_t ObjectsPerThread;
-  uint32_t ObjectLimit;
-  uint32_t RelationLimit;
-  uint64_t SliceBytes;
-  uint64_t ObjectBytes;
-  uint64_t ResultStride;
 } InputGenGPUInputFileHeader;
 
 // Counts one GPU thread's serialized objects and pointer relations.
-typedef struct InputGenGPUInputFileLaneHeader {
+typedef struct InputGenGPUInputFileThreadHeader {
   uint32_t ObjectCount;
   uint32_t RelationCount;
-} InputGenGPUInputFileLaneHeader;
+} InputGenGPUInputFileThreadHeader;
 
-// Persists a logical pointer relation for replay reconstruction.
-typedef struct InputGenGPUInputFileRelation {
-  uint32_t OwnerObject;
-  uint32_t SlotOffset;
-  uint32_t TargetObject;
-  uint32_t TargetOffset;
-} InputGenGPUInputFileRelation;
-
-// Describes one object's capacity and the sparse byte ranges following it.
+// Counts the sparse byte ranges following one deterministic object slot.
 typedef struct InputGenGPUInputFileObjectHeader {
-  uint32_t Capacity;
   uint32_t NumRuns;
 } InputGenGPUInputFileObjectHeader;
 
