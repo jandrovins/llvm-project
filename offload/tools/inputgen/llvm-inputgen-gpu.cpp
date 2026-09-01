@@ -203,8 +203,8 @@ Expected<InputGenInvocation> parseInvocation() {
 
 inputgen_gpu::FactoryConfig
 getFactoryConfig(const InputGenInvocation &Invocation) {
-  return {Invocation.Mode,        Invocation.NumTeams,
-          Invocation.NumThreads,  Invocation.SliceBytes,
+  return {Invocation.NumTeams,    Invocation.NumThreads,
+          Invocation.SliceBytes,
           Invocation.ObjectBytes, Invocation.ConfigObjectsPerThread};
 }
 
@@ -225,7 +225,6 @@ inputgen_gpu::ReplayRequest getReplayRequest() {
 
 void applyFactoryConfig(InputGenInvocation &Invocation,
                         const inputgen_gpu::FactoryConfig &Config) {
-  Invocation.Mode = Config.ExecutionMode;
   Invocation.NumTeams = Config.NumTeams;
   Invocation.NumThreads = Config.NumThreads;
   Invocation.SliceBytes = Config.SliceBytes;
@@ -345,10 +344,7 @@ Error runInputGenGPU() {
     if (Invocation.Mode == inputgen_gpu::Mode::Generate)
       return inputgen_gpu::createGenerationFactory(
           getFactoryConfig(Invocation));
-    auto RecordOrErr = inputgen_gpu::readRecord(Invocation.DataFilename);
-    if (!RecordOrErr)
-      return RecordOrErr.error();
-    return inputgen_gpu::createReplayFactory(RecordOrErr.value(),
+    return inputgen_gpu::createReplayFactory(Invocation.DataFilename,
                                              getReplayRequest());
   };
   inputgen_gpu::Result<inputgen_gpu::Factory> FactoryOrErr = CreateFactory();
@@ -396,11 +392,8 @@ Error runInputGenGPU() {
     return createErr("failed to copy factory from device");
 
   if (Invocation.Mode == inputgen_gpu::Mode::Generate) {
-    auto RecordOrErr = inputgen_gpu::serializeFactory(HostFactory);
-    if (!RecordOrErr)
-      return convertResultError(RecordOrErr);
-    if (inputgen_gpu::Error Failure = inputgen_gpu::writeRecord(
-            Invocation.DataFilename, RecordOrErr.value()))
+    if (inputgen_gpu::Error Failure = inputgen_gpu::writeGenerationRecord(
+            Invocation.DataFilename, HostFactory))
       return convertError(Failure);
     outs() << "serialized input = " << Invocation.DataFilename << "\n";
   }

@@ -32,7 +32,7 @@ int main(int Argc, char **Argv) {
   if (Argc != 3)
     return 1;
 
-  FactoryConfig Config{Mode::Generate, 1, 1, 4096, 64, 2};
+  FactoryConfig Config{1, 1, 4096, 64, 2};
   auto GeneratedOrErr = createGenerationFactory(Config);
   if (!GeneratedOrErr)
     return fail(GeneratedOrErr);
@@ -55,10 +55,7 @@ int main(int Argc, char **Argv) {
       static_cast<unsigned long long>(ResultsOrErr.value()[0].ResultBits),
       ResultsOrErr.value()[0].ErrorCode);
 
-  auto RecordOrErr = serializeFactory(Generated);
-  if (!RecordOrErr)
-    return fail(RecordOrErr);
-  if (Error Failure = writeRecord(Argv[1], RecordOrErr.value()))
+  if (Error Failure = writeGenerationRecord(Argv[1], Generated))
     return fail(Failure);
 
   std::ifstream Input(Argv[1], std::ios::binary);
@@ -69,15 +66,12 @@ int main(int Argc, char **Argv) {
                   PointerBytes + sizeof(OldPointer)) != FileBytes.end();
   std::printf("serialized-old-pointer=%d\n", ContainsPointer);
 
-  auto ParsedOrErr = readRecord(Argv[1]);
-  if (!ParsedOrErr)
-    return fail(ParsedOrErr);
   ReplayRequest Conflict;
   Conflict.NumTeams = 2;
-  auto ConflictOrErr = createReplayFactory(ParsedOrErr.value(), Conflict);
+  auto ConflictOrErr = createReplayFactory(Argv[1], Conflict);
   std::printf("conflict=%d\n", !ConflictOrErr);
 
-  auto ReplayOrErr = createReplayFactory(ParsedOrErr.value());
+  auto ReplayOrErr = createReplayFactory(Argv[1]);
   if (!ReplayOrErr)
     return fail(ReplayOrErr);
   Factory Replay = std::move(ReplayOrErr).value();
@@ -91,11 +85,11 @@ int main(int Argc, char **Argv) {
   std::ofstream Bad(Argv[2], std::ios::binary);
   Bad << "bad";
   Bad.close();
-  auto BadOrErr = readRecord(Argv[2]);
+  auto BadOrErr = createReplayFactory(Argv[2]);
   std::printf("malformed=%d\n", !BadOrErr);
 
-  Error OutputFailure = writeRecord(std::string(Argv[1]) + "/missing/output",
-                                    RecordOrErr.value());
+  Error OutputFailure = writeGenerationRecord(
+      std::string(Argv[1]) + "/missing/output", Generated);
   std::printf("output-error=%d\n", bool(OutputFailure));
   return 0;
 }

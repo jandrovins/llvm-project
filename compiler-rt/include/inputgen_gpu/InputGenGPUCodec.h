@@ -11,7 +11,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -20,12 +19,9 @@
 
 namespace inputgen_gpu {
 
-struct CodecAccess;
-
 enum class Mode : uint32_t { Generate = 1, Replay = 2 };
 
 struct FactoryConfig {
-  Mode ExecutionMode = Mode::Generate;
   uint32_t NumTeams = 1;
   uint32_t NumThreads = 1;
   uint64_t SliceBytes = 0;
@@ -70,26 +66,12 @@ private:
   std::variant<T, Error> Storage;
 };
 
-class Record {
-public:
-  struct Impl;
-
-  Record(Record &&) noexcept;
-  Record &operator=(Record &&) noexcept;
-  ~Record();
-
-  Record(const Record &) = delete;
-  Record &operator=(const Record &) = delete;
-
-  FactoryConfig config() const;
-
-private:
-  explicit Record(std::unique_ptr<Impl> Storage);
-
-  std::unique_ptr<Impl> Storage;
-
-  friend struct CodecAccess;
-};
+class Factory;
+Result<Factory> createGenerationFactory(const FactoryConfig &Config);
+Result<Factory> createReplayFactory(const std::string &Filename,
+                                    const ReplayRequest &Request = {});
+Error writeGenerationRecord(const std::string &Filename,
+                            const Factory &Value);
 
 class Factory {
 public:
@@ -105,13 +87,20 @@ public:
   size_t size() const { return Bytes.size(); }
 
 private:
-  Factory(FactoryConfig Config, std::vector<uint8_t> Bytes)
-      : Config(Config), Bytes(std::move(Bytes)) {}
+  Factory(Mode ExecutionMode, FactoryConfig Config,
+          std::vector<uint8_t> Bytes)
+      : ExecutionMode(ExecutionMode), Config(Config), Bytes(std::move(Bytes)) {}
 
+  Mode ExecutionMode;
   FactoryConfig Config;
   std::vector<uint8_t> Bytes;
 
-  friend struct CodecAccess;
+  friend Result<Factory>
+  createGenerationFactory(const FactoryConfig &Config);
+  friend Result<Factory> createReplayFactory(const std::string &Filename,
+                                             const ReplayRequest &Request);
+  friend Error writeGenerationRecord(const std::string &Filename,
+                                     const Factory &Value);
 };
 
 struct ThreadResult {
@@ -121,12 +110,6 @@ struct ThreadResult {
   uint64_t ResultBits = 0;
 };
 
-Result<Factory> createGenerationFactory(const FactoryConfig &Config);
-Result<Record> readRecord(const std::string &Filename);
-Error writeRecord(const std::string &Filename, const Record &Value);
-Result<Factory> createReplayFactory(const Record &Value,
-                                    const ReplayRequest &Request = {});
-Result<Record> serializeFactory(const Factory &Value);
 Result<std::vector<ThreadResult>> inspectThreadResults(const Factory &Value);
 
 } // namespace inputgen_gpu
