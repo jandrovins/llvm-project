@@ -29,7 +29,6 @@ config.has_libomptarget_ompt = @LIBOMPTARGET_OMPT_SUPPORT@
 config.offload_tblgen = "@OFFLOAD_TBLGEN_EXECUTABLE@"
 config.omp_kernel_replay = "@OMP_KERNEL_REPLAY@"
 config.inputgen_gpu = "@INPUTGEN_GPU_EXECUTABLE@"
-config.inputgen_gpu_runtime_available = @INPUTGEN_GPU_RT_AVAILABLE_PYBOOL@
 config.inputgen_gpu_target_triple = "@INPUTGEN_GPU_RT_TEST_COMPILER_TRIPLE@"
 config.inputgen_gpu_runtime_bc = "@INPUTGEN_GPU_RT_TEST_RUNTIME_BC@"
 # Let the main config do the real work.

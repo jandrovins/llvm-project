@@ -125,7 +125,9 @@ endfunction()
 
 # InputGen's host-only factory test does not require a device runtime build;
 # the raw-bitcode check is enabled only by a GPU compiler-rt configuration.
-compiler_rt_test_runtime(inputgen_gpu NO_COMPILER_RT_HAS_GUARD)
+if(COMPILER_RT_BUILD_INPUTGEN_GPU)
+  compiler_rt_test_runtime(inputgen_gpu NO_COMPILER_RT_HAS_GUARD)
+endif()
 
 # Run sanitizer tests only if we're sure that clang would produce
 # working binaries.

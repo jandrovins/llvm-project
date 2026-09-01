@@ -10,6 +10,6 @@
 // RUN: %not %inputgen-gpu replay %t.image --objects-per-thread=1 2>&1 | FileCheck --check-prefix=CAPACITY-CONFLICT %S/direct-entry-reduction.h
 // RUN: %not %inputgen-gpu generate %t.image --inputgen-data %t.no-such-dir/value 2>&1 | FileCheck --check-prefix=OUTPUT-ERROR %S/direct-entry-reduction.h
 
-// REQUIRES: amdgpu, inputgen-gpu-runtime, inputgen-gpu-amdgpu-image
+// REQUIRES: amdgpu, inputgen-gpu-runtime, inputgen-gpu-launcher, inputgen-gpu-amdgpu-image
 
 #include "direct-entry-reduction.h"

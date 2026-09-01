@@ -17,7 +17,9 @@ if(COMPILER_RT_BUILD_BUILTINS)
   add_subdirectory(builtins)
 endif()
 
-add_subdirectory(inputgen_gpu)
+if(COMPILER_RT_BUILD_INPUTGEN_GPU)
+  add_subdirectory(inputgen_gpu)
+endif()
 
 function(compiler_rt_build_runtime runtime)
   string(TOUPPER ${runtime} runtime_uppercase)

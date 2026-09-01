@@ -27,6 +27,12 @@ if(TARGET omp)
   set(OMP_DEPEND omp)
 endif()
 
+# llvm-inputgen-gpu is only built when compiler-rt's host codec is available.
+set(INPUTGEN_GPU_TOOL "")
+if(TARGET llvm-inputgen-gpu)
+  set(INPUTGEN_GPU_TOOL llvm-inputgen-gpu)
+endif()
+
 if(TARGET omptarget)
   string(REGEX MATCHALL "([^\\ ]+\\ |[^\\ ]+$)" SYSTEM_TARGETS "${LIBOMPTARGET_SYSTEM_TARGETS}")
   foreach(CURRENT_TARGET IN LISTS SYSTEM_TARGETS)
@@ -42,27 +48,21 @@ if(TARGET omptarget)
     else()
       unset(INPUTGEN_GPU_RT_TEST_COMPILER_TRIPLE)
     endif()
-    set(INPUTGEN_GPU_RT_AVAILABLE FALSE)
+    # compiler-rt publishes the raw module in the target resource directory.
+    # It is produced by a sibling runtimes build that has not run yet when this
+    # suite is configured, so only derive the path here; lit.cfg decides
+    # availability by testing for the file when the tests actually run.
     set(INPUTGEN_GPU_RT_TEST_RUNTIME_BC "")
     if(INPUTGEN_GPU_RT_TEST_COMPILER_TRIPLE)
-      # compiler-rt publishes the raw module in the target resource directory.
       set(INPUTGEN_GPU_RT_TEST_RUNTIME_BC
           ${RUNTIMES_OUTPUT_RESOURCE_DIR}/lib/${INPUTGEN_GPU_RT_TEST_COMPILER_TRIPLE}/libclang_rt.inputgen_gpu.bc)
-      if(EXISTS "${INPUTGEN_GPU_RT_TEST_RUNTIME_BC}")
-        set(INPUTGEN_GPU_RT_AVAILABLE TRUE)
-      endif()
-    endif()
-    if(INPUTGEN_GPU_RT_AVAILABLE)
-      set(INPUTGEN_GPU_RT_AVAILABLE_PYBOOL True)
-    else()
-      set(INPUTGEN_GPU_RT_AVAILABLE_PYBOOL False)
     endif()
 
     add_offload_testsuite(check-libomptarget-${CURRENT_TARGET}
       "Running libomptarget tests"
       ${CMAKE_CURRENT_BINARY_DIR}/${CURRENT_TARGET}
       DEPENDS omptarget ${OMP_DEPEND} ${LIBOMPTARGET_TESTED_PLUGINS}
-              llvm-inputgen-gpu
+              ${INPUTGEN_GPU_TOOL}
       ARGS ${LIBOMPTARGET_LIT_ARG_LIST})
     list(APPEND LIBOMPTARGET_LIT_TESTSUITES ${CMAKE_CURRENT_BINARY_DIR}/${CURRENT_TARGET})
 
@@ -73,7 +73,7 @@ if(TARGET omptarget)
 
   # The tools that are needed or used by tests.
   set(OFFLOAD_TOOLS llvm-offload-device-info llvm-omp-kernel-replay
-                    llvm-inputgen-gpu)
+                    ${INPUTGEN_GPU_TOOL})
 
   add_offload_testsuite(check-libomptarget
     "Running libomptarget tests"
