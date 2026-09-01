@@ -185,20 +185,14 @@ bool createInputGenGPUEntryKernel(Module &M, InstrumentorIRBuilderTy &IIRB,
   if (!collectInstrumentedFunctions(EntryFn, IIRB, Info))
     return false;
 
-  // Select the target kernel ABI and X-dimension IDs used to find this GPU
-  // thread's factory slice.
+  // Select the target kernel ABI. The runtime obtains this GPU thread's
+  // hardware coordinates when it resolves the factory slice.
   const Triple &T = M.getTargetTriple();
   CallingConv::ID KernelCallingConv;
-  StringRef WorkgroupIdName;
-  StringRef WorkitemIdName;
   if (T.isAMDGPU()) {
     KernelCallingConv = CallingConv::AMDGPU_KERNEL;
-    WorkgroupIdName = "llvm.amdgcn.workgroup.id.x";
-    WorkitemIdName = "llvm.amdgcn.workitem.id.x";
   } else if (T.isNVPTX()) {
     KernelCallingConv = CallingConv::PTX_Kernel;
-    WorkgroupIdName = "llvm.nvvm.read.ptx.sreg.ctaid.x";
-    WorkitemIdName = "llvm.nvvm.read.ptx.sreg.tid.x";
   } else {
     IIRB.Ctx.diagnose(DiagnosticInfoInstrumentation(
         Twine("InputGen GPU objects require AMDGPU or NVPTX, not target '") +
@@ -281,27 +275,16 @@ bool createInputGenGPUEntryKernel(Module &M, InstrumentorIRBuilderTy &IIRB,
   // skips pass-created instructions, while scalar argument loads need hooks.
   IRBuilder<> IRB(EntryBB);
 
-  // Linearize the target workgroup/block and workitem/thread IDs into the
-  // unique factory slice index owned by this GPU thread.
-  FunctionCallee WorkgroupId = M.getOrInsertFunction(
-      WorkgroupIdName, FunctionType::get(IIRB.Int32Ty, /*isVarArg=*/false));
-  FunctionCallee WorkitemId = M.getOrInsertFunction(
-      WorkitemIdName, FunctionType::get(IIRB.Int32Ty, /*isVarArg=*/false));
-  Value *Workgroup = IRB.CreateZExt(IRB.CreateCall(WorkgroupId), IIRB.Int64Ty);
-  Value *Workitem = IRB.CreateZExt(IRB.CreateCall(WorkitemId), IIRB.Int64Ty);
-
   // Ask the device runtime to initialize or validate this thread's slice and
   // return object zero, which stores the scalar argument bytes.
-  FunctionCallee PrepareLane = M.getOrInsertFunction(
-      "__ig_prepare_lane",
+  FunctionCallee PrepareThread = M.getOrInsertFunction(
+      "__ig_prepare_thread",
       FunctionType::get(
           IIRB.PtrTy,
-          {IIRB.PtrTy, IIRB.Int64Ty, IIRB.Int64Ty, IIRB.Int64Ty, IIRB.Int32Ty},
-          false));
+          {IIRB.PtrTy, IIRB.Int64Ty, IIRB.Int32Ty}, false));
   Value *ArgumentData =
-      IRB.CreateCall(PrepareLane,
-                     {Context, Workgroup, Workitem,
-                      ConstantInt::get(IIRB.Int64Ty, ArgumentBytes),
+      IRB.CreateCall(PrepareThread,
+                     {Context, ConstantInt::get(IIRB.Int64Ty, ArgumentBytes),
                       ConstantInt::get(IIRB.Int32Ty, PointerArgumentCount)},
                      "inputgen.arguments");
 

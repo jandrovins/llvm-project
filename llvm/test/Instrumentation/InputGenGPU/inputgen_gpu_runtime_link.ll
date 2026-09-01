@@ -10,9 +10,7 @@ target triple = "amdgcn-amd-amdhsa"
 ; CHECK-LABEL: define hidden i32 @vvv_foo(
 ; CHECK: call ptr @__ig_pre_load(
 ; CHECK-LABEL: define amdgpu_kernel void @__ig_entry(
-; CHECK: call i32 @llvm.amdgcn.workgroup.id.x()
-; CHECK: call i32 @llvm.amdgcn.workitem.id.x()
-; CHECK: define protected ptr @__ig_prepare_lane(
+; CHECK: define protected ptr @__ig_prepare_thread(
 ; CHECK: define protected void @__ig_store_result(
 ; CHECK: define protected ptr @__ig_pre_load(
 

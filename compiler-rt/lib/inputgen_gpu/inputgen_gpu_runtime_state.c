@@ -14,8 +14,8 @@ static InputGenGPUFactoryHeader *currentFactory(void) {
   return (InputGenGPUFactoryHeader *)(uintptr_t)FactoryContextBits;
 }
 
-static InputGenGPUFactorySliceHeader *currentSlice(void) {
-  InputGenGPUFactoryHeader *Factory = currentFactory();
+static InputGenGPUFactorySliceHeader *
+getCurrentSlice(InputGenGPUFactoryHeader *Factory, uint64_t *ThreadIndex) {
   if (!Factory)
     return 0;
 #if defined(__AMDGCN__)
@@ -32,12 +32,18 @@ static InputGenGPUFactorySliceHeader *currentSlice(void) {
   if (WorkitemIndex >= Factory->ThreadsPerTeam ||
       WorkgroupIndex > (UINT64_MAX - WorkitemIndex) / Factory->ThreadsPerTeam)
     return 0;
-  uint64_t LaneIndex = WorkgroupIndex * Factory->ThreadsPerTeam + WorkitemIndex;
-  if (LaneIndex >= Factory->NumLanes)
+  uint64_t Index = WorkgroupIndex * Factory->ThreadsPerTeam + WorkitemIndex;
+  if (Index >= Factory->NumLanes)
     return 0;
+  if (ThreadIndex)
+    *ThreadIndex = Index;
   return (InputGenGPUFactorySliceHeader *)((char *)Factory +
                                            alignTo(sizeof(*Factory), 8) +
-                                           LaneIndex * Factory->SliceBytes);
+                                           Index * Factory->SliceBytes);
+}
+
+static InputGenGPUFactorySliceHeader *currentSlice(void) {
+  return getCurrentSlice(currentFactory(), 0);
 }
 
 static uint64_t alignTo(uint64_t Value, uint64_t Alignment) {
@@ -111,26 +117,20 @@ allocateObject(InputGenGPUFactorySliceHeader *Slice, uint64_t SliceBytes,
   return Object;
 }
 
-void *__ig_prepare_lane(void *Context, uint64_t WorkgroupIndex,
-                        uint64_t WorkitemIndex, uint64_t ArgumentBytes,
-                        uint32_t PointerArgumentCount) {
+void *__ig_prepare_thread(void *Context, uint64_t ArgumentBytes,
+                          uint32_t PointerArgumentCount) {
   InputGenGPUFactoryHeader *Factory = (InputGenGPUFactoryHeader *)Context;
   if (!Factory || Factory->Magic != INPUTGEN_GPU_FACTORY_SLICE_MAGIC ||
       Factory->Version != INPUTGEN_GPU_FACTORY_VERSION ||
-      WorkitemIndex >= Factory->ThreadsPerTeam ||
       !Factory->ConfigObjectsPerThread ||
       PointerArgumentCount > UINT32_MAX - Factory->ConfigObjectsPerThread)
     return 0;
-  if (WorkgroupIndex > (UINT64_MAX - WorkitemIndex) / Factory->ThreadsPerTeam)
-    return 0;
-  uint64_t LaneIndex = WorkgroupIndex * Factory->ThreadsPerTeam + WorkitemIndex;
-  if (LaneIndex >= Factory->NumLanes)
-    return 0;
-  InputGenGPUFactorySliceHeader *Slice =
-      (InputGenGPUFactorySliceHeader *)((char *)Factory +
-                                        alignTo(sizeof(*Factory), 8) +
-                                        LaneIndex * Factory->SliceBytes);
   FactoryContextBits = (uint64_t)(uintptr_t)Factory;
+  uint64_t ThreadIndex = 0;
+  InputGenGPUFactorySliceHeader *Slice =
+      getCurrentSlice(Factory, &ThreadIndex);
+  if (!Slice)
+    return 0;
 
   if (Factory->Mode == INPUTGEN_MODE_GENERATE) {
     // Initialize tables and object zero; pointer loads allocate later objects.
@@ -138,7 +138,7 @@ void *__ig_prepare_lane(void *Context, uint64_t WorkgroupIndex,
     Slice->Magic = INPUTGEN_GPU_FACTORY_SLICE_MAGIC;
     Slice->Version = INPUTGEN_GPU_FACTORY_VERSION;
     Slice->Mode = Factory->Mode;
-    Slice->SliceIndex = (uint32_t)LaneIndex;
+    Slice->SliceIndex = (uint32_t)ThreadIndex;
     Slice->ObjectLimit = PointerArgumentCount + Factory->ConfigObjectsPerThread;
     Slice->RelationLimit = Slice->ObjectLimit - 1;
     Slice->ArgumentBytes = ArgumentBytes;
@@ -162,7 +162,7 @@ void *__ig_prepare_lane(void *Context, uint64_t WorkgroupIndex,
     // Accept only the host-reconstructed layout from the matching recording.
     if (Slice->Magic != INPUTGEN_GPU_FACTORY_SLICE_MAGIC ||
         Slice->Version != INPUTGEN_GPU_FACTORY_VERSION ||
-        Slice->SliceIndex != LaneIndex ||
+        Slice->SliceIndex != ThreadIndex ||
         Slice->ArgumentBytes != ArgumentBytes ||
         Slice->ObjectLimit !=
             PointerArgumentCount + Factory->ConfigObjectsPerThread ||

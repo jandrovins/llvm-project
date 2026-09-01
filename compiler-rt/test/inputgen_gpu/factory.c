@@ -23,7 +23,7 @@ int main(void) {
   Header->ObjectBytes = 64;
   Header->FactoryBytes = sizeof(Factory);
 
-  void *Arguments = __ig_prepare_lane(Factory, 0, 0, 8, 1);
+  void *Arguments = __ig_prepare_thread(Factory, 8, 1);
   void *PointerSlot =
       __ig_pre_load(Arguments, 0, 8, 8, INPUTGEN_GPU_VALUE_POINTER);
   void *Pointer = *(void **)PointerSlot;
@@ -39,7 +39,7 @@ int main(void) {
          Slice->RelationCount);
 
   Header->Mode = INPUTGEN_MODE_REPLAY;
-  Arguments = __ig_prepare_lane(Factory, 0, 0, 8, 1);
+  Arguments = __ig_prepare_thread(Factory, 8, 1);
   PointerSlot = __ig_pre_load(Arguments, 0, 8, 8, INPUTGEN_GPU_VALUE_POINTER);
   Pointer = *(void **)PointerSlot;
   Value = (int *)__ig_pre_load(Pointer, 0, 4, 4, INPUTGEN_GPU_VALUE_INTEGER);
@@ -47,7 +47,7 @@ int main(void) {
 
   Header->Mode = INPUTGEN_MODE_GENERATE;
   Header->ConfigObjectsPerThread = 2;
-  Arguments = __ig_prepare_lane(Factory, 0, 0, 8, 1);
+  Arguments = __ig_prepare_thread(Factory, 8, 1);
   PointerSlot = __ig_pre_load(Arguments, 0, 8, 8, INPUTGEN_GPU_VALUE_POINTER);
   Pointer = *(void **)PointerSlot;
   void *NestedSlot =
@@ -60,7 +60,7 @@ int main(void) {
          Slice->RelationLimit);
 
   Header->Mode = INPUTGEN_MODE_REPLAY;
-  Arguments = __ig_prepare_lane(Factory, 0, 0, 8, 1);
+  Arguments = __ig_prepare_thread(Factory, 8, 1);
   PointerSlot = __ig_pre_load(Arguments, 0, 8, 8, INPUTGEN_GPU_VALUE_POINTER);
   Pointer = *(void **)PointerSlot;
   NestedSlot = __ig_pre_load(Pointer, 0, 8, 8, INPUTGEN_GPU_VALUE_POINTER);

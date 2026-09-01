@@ -22,7 +22,7 @@ int main(void) {
   Header->SliceBytes = 2048;
   Header->ObjectBytes = 64;
 
-  void *Arguments = __ig_prepare_lane(Factory, 0, 0, 8, 1);
+  void *Arguments = __ig_prepare_thread(Factory, 8, 1);
   void *Slot = __ig_pre_load(Arguments, 0, 8, 8, INPUTGEN_GPU_VALUE_POINTER);
   void *Pointer = *(void **)Slot;
   void *OutOfBounds = (char *)Pointer + 64;
@@ -34,14 +34,14 @@ int main(void) {
   printf("error=%u fallback=%d\n", Slice->Error, *Fallback);
 
   Header->Mode = INPUTGEN_MODE_GENERATE;
-  Arguments = __ig_prepare_lane(Factory, 0, 0, 8, 1);
+  Arguments = __ig_prepare_thread(Factory, 8, 1);
   Slot = __ig_pre_load(Arguments, 0, 8, 8, INPUTGEN_GPU_VALUE_POINTER);
   Pointer = *(void **)Slot;
   (void)__ig_pre_load(Pointer, 0, 8, 8, INPUTGEN_GPU_VALUE_POINTER);
   printf("capacity-error=%u\n", Slice->Error);
 
   Header->Mode = INPUTGEN_MODE_GENERATE;
-  (void)__ig_prepare_lane(Factory, 0, 0, 8, 1);
+  (void)__ig_prepare_thread(Factory, 8, 1);
   int External = 7;
   void *PassedThrough =
       __ig_pre_load(&External, 0, 4, 4, INPUTGEN_GPU_VALUE_INTEGER);

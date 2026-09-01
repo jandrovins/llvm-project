@@ -10,9 +10,7 @@ target triple = "nvptx64-nvidia-cuda"
 ; CHECK-LABEL: define hidden i32 @vvv_foo(
 ; CHECK: call ptr @__ig_pre_load(
 ; CHECK-LABEL: define ptx_kernel void @__ig_entry(
-; CHECK: call i32 @llvm.nvvm.read.ptx.sreg.ctaid.x()
-; CHECK: call i32 @llvm.nvvm.read.ptx.sreg.tid.x()
-; CHECK: define protected ptr @__ig_prepare_lane(
+; CHECK: define protected ptr @__ig_prepare_thread(
 ; CHECK: define protected void @__ig_store_result(
 ; CHECK: define protected ptr @__ig_pre_load(
 

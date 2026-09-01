@@ -3,7 +3,7 @@
 // RUN: llvm-nm --defined-only %t.bc | FileCheck %s
 // REQUIRES: inputgen-gpu-runtime
 
-// CHECK-DAG: __ig_prepare_lane
+// CHECK-DAG: __ig_prepare_thread
 // CHECK-DAG: __ig_pre_load
 // CHECK-DAG: __ig_pre_store
 // CHECK-DAG: __ig_error_pending
