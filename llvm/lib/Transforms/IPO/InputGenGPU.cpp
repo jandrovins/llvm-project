@@ -253,10 +253,13 @@ bool createInputGenGPUEntryKernel(Module &M, InstrumentorIRBuilderTy &IIRB,
     return false;
   }
 
-  // The launcher passes one opaque factory context. Runtime-private state
-  // derives this GPU thread's slice from it.
+  // The launcher passes the opaque factory context followed by the current
+  // OpenMP kernel-launch-environment slot. InputGen does not use the latter:
+  // it is present solely to satisfy the current libomptarget kernel ABI and
+  // must never become a generated InputGen object.
   FunctionType *EntryPointTy =
-      FunctionType::get(IIRB.VoidTy, {IIRB.PtrTy}, /*isVarArg=*/false);
+      FunctionType::get(IIRB.VoidTy, {IIRB.PtrTy, IIRB.PtrTy},
+                        /*isVarArg=*/false);
   Function *EntryPoint = Function::Create(
       EntryPointTy, GlobalValue::ExternalLinkage, InputGenGPUEntryPointName, M);
   EntryPoint->setCallingConv(KernelCallingConv);
@@ -264,6 +267,7 @@ bool createInputGenGPUEntryKernel(Module &M, InstrumentorIRBuilderTy &IIRB,
 
   Argument *Context = &*EntryPoint->arg_begin();
   Context->setName("context");
+  EntryPoint->getArg(1)->setName("dyn_ptr");
 
   // Start the wrapper body with a normal IRBuilder so its scalar loads remain
   // visible to the later Instrumentor pass.

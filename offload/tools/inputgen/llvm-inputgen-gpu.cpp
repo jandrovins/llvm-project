@@ -17,6 +17,7 @@
 #include "inputgen_gpu/InputGenGPUCodec.h"
 
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Frontend/OpenMP/OMPConstants.h"
 #include "llvm/Frontend/Offloading/Utility.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
@@ -34,9 +35,6 @@
 using namespace llvm;
 
 #define TOOL_NAME "llvm-inputgen-gpu"
-#ifndef OMP_KERNEL_ARG_VERSION
-#define OMP_KERNEL_ARG_VERSION 5
-#endif
 
 namespace {
 
@@ -74,12 +72,13 @@ public:
   int32_t DeviceId = 0;
 };
 
-// Owns the arrays backing the entry kernel's single opaque context argument.
+// Owns the arrays backing the factory context and runtime-owned dyn_ptr slot
+// of an InputGen entry-kernel launch. The device entry ignores dyn_ptr.
 struct KernelLaunchArguments {
-  void *ArgBasePtrs[1] = {};
-  void *ArgPtrs[1] = {};
-  int64_t ArgSizes[1] = {};
-  int64_t ArgTypes[1] = {};
+  void *ArgBasePtrs[2] = {};
+  void *ArgPtrs[2] = {};
+  int64_t ArgSizes[2] = {};
+  int64_t ArgTypes[2] = {};
   KernelArgsTy KernelArgs{};
 };
 
@@ -221,17 +220,24 @@ Error copyToDevice(DeviceAllocation &Allocation,
 void buildKernelLaunchArguments(const InputGenInvocation &Invocation,
                                 DeviceAllocation &Allocation,
                                 KernelLaunchArguments &Args) {
-  Args.ArgBasePtrs[0] = &Allocation.Factory;
-  Args.ArgPtrs[0] = &Allocation.Factory;
+  // A literal target parameter is forwarded verbatim by libomptarget. Pass
+  // the device allocation value, not the address of this host-side variable
+  // that stores it; the latter would make the GPU dereference host memory.
+  Args.ArgBasePtrs[0] = Allocation.Factory;
+  Args.ArgPtrs[0] = Allocation.Factory;
   Args.ArgSizes[0] = sizeof(Allocation.Factory);
   Args.ArgTypes[0] = OMP_TGT_MAPTYPE_TARGET_PARAM | OMP_TGT_MAPTYPE_LITERAL;
+  // Reserve the current OpenMP ABI's final dyn_ptr slot. libomptarget fills
+  // this runtime-owned value immediately before launch; __ig_entry receives
+  // it only to match the ABI and deliberately never dereferences it.
+  Args.ArgSizes[1] = sizeof(void *);
+  Args.ArgTypes[1] = OMP_TGT_MAPTYPE_TARGET_PARAM | OMP_TGT_MAPTYPE_LITERAL;
   Args.KernelArgs.Version = OMP_KERNEL_ARG_VERSION;
-  Args.KernelArgs.NumArgs = 1;
+  Args.KernelArgs.NumArgs = 2;
   Args.KernelArgs.ArgBasePtrs = Args.ArgBasePtrs;
   Args.KernelArgs.ArgPtrs = Args.ArgPtrs;
   Args.KernelArgs.ArgSizes = Args.ArgSizes;
   Args.KernelArgs.ArgTypes = Args.ArgTypes;
-  Args.KernelArgs.Flags.IsPtrArgs = 1;
   Args.KernelArgs.Flags.StrictBlocksAndThreads = 1;
   Args.KernelArgs.UserNumBlocks[0] = Invocation.FactoryConfig.NumTeams;
   Args.KernelArgs.UserNumBlocks[1] = 1;

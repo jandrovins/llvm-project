@@ -18,6 +18,7 @@ entry:
 
 ; AMDGPU-LABEL: define amdgpu_kernel void @__ig_entry(
 ; NVPTX-LABEL: define ptx_kernel void @__ig_entry(
+; COMMON-SAME: ptr %context, ptr %dyn_ptr)
 ; COMMON: [[ARGUMENTS:%.*]] = call ptr @__ig_prepare_thread(ptr %context, i64 8)
 ; COMMON: [[SLOT:%.*]] = getelementptr inbounds i8, ptr [[ARGUMENTS]], i64 0
 ; COMMON: [[SLOT_ADDRESS:%.*]] = call ptr @__ig_pre_load(ptr [[SLOT]], i32 0, i64 8, i64 8, i32 4)

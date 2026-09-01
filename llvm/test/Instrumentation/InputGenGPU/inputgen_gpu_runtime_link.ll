@@ -10,10 +10,12 @@ target datalayout = "e-p:64:64-i64:64-n32:64"
 ; COMMON-LABEL: define hidden i32 @vvv_foo(
 ; COMMON: call ptr @__ig_pre_load(
 ; AMDGPU-LABEL: define amdgpu_kernel void @__ig_entry(
+; AMDGPU-SAME: ptr %context, ptr %dyn_ptr)
 ; AMDGPU: define protected ptr @__ig_prepare_thread(
 ; AMDGPU: define protected void @__ig_store_result(
 ; AMDGPU: define protected ptr @__ig_pre_load(
 ; NVPTX-LABEL: define ptx_kernel void @__ig_entry(
+; NVPTX-SAME: ptr %context, ptr %dyn_ptr)
 ; NVPTX: define protected ptr @__ig_prepare_thread(
 ; NVPTX: define protected void @__ig_store_result(
 ; NVPTX: define protected ptr @__ig_pre_load(
