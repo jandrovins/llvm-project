@@ -67,6 +67,7 @@ struct InputGenInvocation {
   uint32_t NumThreads;
   uint64_t SliceBytes;
   uint64_t ObjectBytes;
+  uint32_t ConfigObjectsPerThread;
 };
 
 // Stores one contiguous range of observed input bytes within an object.
@@ -158,6 +159,12 @@ cl::opt<uint64_t> ObjectBytesOpt(
     "object-bytes",
     cl::desc("Fixed data capacity for each pointer-argument object"),
     cl::init(DefaultObjectBytes), cl::cat(InputGenGPUCategory));
+cl::opt<uint32_t> ConfigObjectsPerThreadOpt(
+    "config-objects-per-thread",
+    cl::desc("Additional object capacity per GPU thread, including the "
+             "argument object; the final limit also includes one object per "
+             "pointer argument"),
+    cl::init(1), cl::cat(InputGenGPUCategory));
 
 template <typename... ArgsTy>
 Error createErr(const char *ErrFmt, ArgsTy &&...Args) {
@@ -216,13 +223,27 @@ Error validateFactoryOptions(const InputGenInvocation &Invocation) {
     return createErr(
         "--object-bytes must be a nonzero value no greater than %u",
         std::numeric_limits<uint32_t>::max());
+  if (!Invocation.ConfigObjectsPerThread)
+    return createErr("--config-objects-per-thread must be nonzero");
+  uint64_t MinimumTableBytes =
+      alignTo(sizeof(InputGenGPUFactorySliceHeader), 8) +
+      uint64_t(Invocation.ConfigObjectsPerThread) * sizeof(uint64_t) +
+      uint64_t(Invocation.ConfigObjectsPerThread - 1) *
+          sizeof(InputGenGPUFactoryPointerRelation);
+  if (MinimumTableBytes > Invocation.SliceBytes)
+    return createErr("configured object tables do not fit in each GPU "
+                     "thread's factory slice");
   return Error::success();
 }
 
-Error validateLaneLayout(const InputLane &Lane, uint64_t SliceBytes) {
+Error validateLaneLayout(const InputLane &Lane, uint64_t SliceBytes,
+                         uint32_t ObjectLimit, uint32_t RelationLimit) {
   if (Lane.Objects.empty() ||
       Lane.Objects.size() > INPUTGEN_GPU_VPTR_OBJECT_MASK + 1 ||
-      Lane.Relations.size() + 1 != Lane.Objects.size())
+      Lane.Objects.size() > ObjectLimit ||
+      Lane.Relations.size() > RelationLimit ||
+      Lane.Relations.size() + 1 != Lane.Objects.size() ||
+      RelationLimit + 1 != ObjectLimit)
     return createErr("invalid InputGen object relationship layout");
 
   for (uint32_t I = 0; I < Lane.Relations.size(); ++I) {
@@ -236,10 +257,10 @@ Error validateLaneLayout(const InputLane &Lane, uint64_t SliceBytes) {
       return createErr("invalid InputGen pointer relationship");
   }
 
-  uint64_t LayoutBytes = alignTo(sizeof(InputGenGPUFactorySliceHeader), 8) +
-                         uint64_t(Lane.Objects.size()) * sizeof(uint64_t) +
-                         uint64_t(Lane.Relations.size()) *
-                             sizeof(InputGenGPUFactoryPointerRelation);
+  uint64_t LayoutBytes =
+      alignTo(sizeof(InputGenGPUFactorySliceHeader), 8) +
+      uint64_t(ObjectLimit) * sizeof(uint64_t) +
+      uint64_t(RelationLimit) * sizeof(InputGenGPUFactoryPointerRelation);
   return LayoutBytes <= SliceBytes
              ? Error::success()
              : createErr("InputGen tables do not fit in slice");
@@ -302,6 +323,7 @@ Expected<InputGenInvocation> parseInvocation() {
       NumThreadsOpt > 0 ? NumThreadsOpt.getValue() : 1,
       FactoryBytesOpt,
       ObjectBytesOpt,
+      ConfigObjectsPerThreadOpt,
   };
 }
 
@@ -406,6 +428,9 @@ Expected<InputRecord> readInputRecord(StringRef Filename) {
         getNumLanes(Record.Header.NumTeams, Record.Header.NumThreads);
     if (!NumLanes || *NumLanes != Record.Header.NumLanes ||
         !Record.Header.SliceBytes || !Record.Header.ObjectBytes ||
+        !Record.Header.ConfigObjectsPerThread ||
+        Record.Header.ObjectLimit < Record.Header.ConfigObjectsPerThread ||
+        Record.Header.RelationLimit + 1 != Record.Header.ObjectLimit ||
         Record.Header.ResultStride != DefaultResultStride)
       Err = createErr("invalid InputGen data file '%s'", Filename.data());
   }
@@ -453,7 +478,9 @@ Expected<InputRecord> readInputRecord(StringRef Filename) {
       if (!Err)
         Err = readValue(File, Relation);
     if (!Err)
-      Err = validateLaneLayout(Lane, Record.Header.SliceBytes);
+      Err = validateLaneLayout(Lane, Record.Header.SliceBytes,
+                               Record.Header.ObjectLimit,
+                               Record.Header.RelationLimit);
   }
   std::fclose(File);
   if (Err)
@@ -475,6 +502,9 @@ Expected<InputRecord> serializeFactory(const InputGenInvocation &Invocation,
                    Invocation.NumTeams,
                    Invocation.NumThreads,
                    *NumLanes,
+                   Invocation.ConfigObjectsPerThread,
+                   0,
+                   0,
                    Invocation.SliceBytes,
                    Invocation.ObjectBytes,
                    DefaultResultStride};
@@ -494,21 +524,34 @@ Expected<InputRecord> serializeFactory(const InputGenInvocation &Invocation,
       return createErr("device GPU thread %u has factory version %u", LaneIndex,
                        Slice->Version);
     if (Slice->Error)
-      return createErr("device GPU thread %u reported InputGen factory error %u",
-                       LaneIndex, Slice->Error);
+      return createErr(
+          "device GPU thread %u reported InputGen factory error %u", LaneIndex,
+          Slice->Error);
     if (Slice->SliceIndex != LaneIndex)
       return createErr("device GPU thread %u reported slice index %u",
                        LaneIndex, Slice->SliceIndex);
     if (!Slice->ObjectCount)
       return createErr("device GPU thread %u created no argument object",
                        LaneIndex);
-    if (Slice->ObjectCount != Slice->ObjectLimit)
+    if (Slice->ObjectCount > Slice->ObjectLimit)
       return createErr("device GPU thread %u created %u of %u objects",
                        LaneIndex, Slice->ObjectCount, Slice->ObjectLimit);
     if (Slice->RelationCount + 1 != Slice->ObjectCount ||
-        Slice->RelationCount != Slice->RelationLimit)
-      return createErr("device GPU thread %u has inconsistent pointer relations",
+        Slice->RelationCount > Slice->RelationLimit ||
+        Slice->RelationLimit + 1 != Slice->ObjectLimit)
+      return createErr(
+          "device GPU thread %u has inconsistent pointer relations", LaneIndex);
+    if (Slice->ObjectLimit < Invocation.ConfigObjectsPerThread)
+      return createErr("device GPU thread %u has invalid object capacity",
                        LaneIndex);
+    if (LaneIndex == 0) {
+      Record.Header.ObjectLimit = Slice->ObjectLimit;
+      Record.Header.RelationLimit = Slice->RelationLimit;
+    } else if (Slice->ObjectLimit != Record.Header.ObjectLimit ||
+               Slice->RelationLimit != Record.Header.RelationLimit) {
+      return createErr("device GPU thread %u has inconsistent capacity",
+                       LaneIndex);
+    }
 
     InputLane &Lane = Record.Lanes[LaneIndex];
     Lane.Objects.reserve(Slice->ObjectCount);
@@ -576,7 +619,9 @@ Expected<InputRecord> serializeFactory(const InputGenInvocation &Invocation,
       Lane.Relations.push_back(
           {Relations[I].OwnerObject, Relations[I].SlotOffset,
            Relations[I].TargetObject, Relations[I].TargetOffset});
-    if (Error Err = validateLaneLayout(Lane, Invocation.SliceBytes))
+    if (Error Err = validateLaneLayout(Lane, Invocation.SliceBytes,
+                                       Record.Header.ObjectLimit,
+                                       Record.Header.RelationLimit))
       return std::move(Err);
   }
   return Record;
@@ -595,7 +640,9 @@ Error reconstructFactory(const InputRecord &Record,
   for (uint32_t LaneIndex = 0; LaneIndex < Record.Header.NumLanes;
        ++LaneIndex) {
     const InputLane &Lane = Record.Lanes[LaneIndex];
-    if (Error Err = validateLaneLayout(Lane, Record.Header.SliceBytes))
+    if (Error Err = validateLaneLayout(Lane, Record.Header.SliceBytes,
+                                       Record.Header.ObjectLimit,
+                                       Record.Header.RelationLimit))
       return std::move(Err);
     uint8_t *SliceStart = Factory.data() + FactoryHeaderBytes +
                           uint64_t(LaneIndex) * Record.Header.SliceBytes;
@@ -605,9 +652,9 @@ Error reconstructFactory(const InputRecord &Record,
     Slice->Mode = INPUTGEN_MODE_REPLAY;
     Slice->SliceIndex = LaneIndex;
     Slice->ObjectCount = static_cast<uint32_t>(Lane.Objects.size());
-    Slice->ObjectLimit = static_cast<uint32_t>(Lane.Objects.size());
+    Slice->ObjectLimit = Record.Header.ObjectLimit;
     Slice->RelationCount = static_cast<uint32_t>(Lane.Relations.size());
-    Slice->RelationLimit = static_cast<uint32_t>(Lane.Relations.size());
+    Slice->RelationLimit = Record.Header.RelationLimit;
     Slice->ArgumentBytes = Lane.Objects.front().Capacity;
     Slice->ObjectBytes = Record.Header.ObjectBytes;
 
@@ -670,6 +717,7 @@ void initializeFactoryHeader(std::vector<uint8_t> &Factory,
   Header->NumTeams = Invocation.NumTeams;
   Header->ThreadsPerTeam = Invocation.NumThreads;
   Header->NumLanes = Invocation.NumTeams * Invocation.NumThreads;
+  Header->ConfigObjectsPerThread = Invocation.ConfigObjectsPerThread;
   Header->SliceBytes = Invocation.SliceBytes;
   Header->ObjectBytes = Invocation.ObjectBytes;
   Header->FactoryBytes = FactorySize;
@@ -686,13 +734,16 @@ Error applyReplayInvocation(InputGenInvocation &Invocation,
       (FactoryBytesOpt.getNumOccurrences() &&
        FactoryBytesOpt != Record.Header.SliceBytes) ||
       (ObjectBytesOpt.getNumOccurrences() &&
-       ObjectBytesOpt != Record.Header.ObjectBytes))
+       ObjectBytesOpt != Record.Header.ObjectBytes) ||
+      (ConfigObjectsPerThreadOpt.getNumOccurrences() &&
+       ConfigObjectsPerThreadOpt != Record.Header.ConfigObjectsPerThread))
     return createErr("replay options conflict with the InputGen data file");
 
   Invocation.NumTeams = Record.Header.NumTeams;
   Invocation.NumThreads = Record.Header.NumThreads;
   Invocation.SliceBytes = Record.Header.SliceBytes;
   Invocation.ObjectBytes = Record.Header.ObjectBytes;
+  Invocation.ConfigObjectsPerThread = Record.Header.ConfigObjectsPerThread;
   return Error::success();
 }
 

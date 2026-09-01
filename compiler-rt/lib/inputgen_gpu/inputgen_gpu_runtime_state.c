@@ -127,7 +127,8 @@ void *__ig_prepare_lane(void *Context, uint64_t WorkgroupIndex,
   if (!Factory || Factory->Magic != INPUTGEN_GPU_FACTORY_SLICE_MAGIC ||
       Factory->Version != INPUTGEN_GPU_FACTORY_VERSION ||
       WorkitemIndex >= Factory->ThreadsPerTeam ||
-      PointerArgumentCount == UINT32_MAX)
+      !Factory->ConfigObjectsPerThread ||
+      PointerArgumentCount > UINT32_MAX - Factory->ConfigObjectsPerThread)
     return 0;
   if (WorkgroupIndex > (UINT64_MAX - WorkitemIndex) / Factory->ThreadsPerTeam)
     return 0;
@@ -147,8 +148,8 @@ void *__ig_prepare_lane(void *Context, uint64_t WorkgroupIndex,
     Slice->Version = INPUTGEN_GPU_FACTORY_VERSION;
     Slice->Mode = Factory->Mode;
     Slice->SliceIndex = (uint32_t)LaneIndex;
-    Slice->ObjectLimit = PointerArgumentCount + 1;
-    Slice->RelationLimit = PointerArgumentCount;
+    Slice->ObjectLimit = PointerArgumentCount + Factory->ConfigObjectsPerThread;
+    Slice->RelationLimit = Slice->ObjectLimit - 1;
     Slice->ArgumentBytes = ArgumentBytes;
     Slice->ObjectBytes = Factory->ObjectBytes;
     Slice->ObjectTableOffset = alignTo(sizeof(*Slice), 8);
@@ -172,10 +173,12 @@ void *__ig_prepare_lane(void *Context, uint64_t WorkgroupIndex,
         Slice->Version != INPUTGEN_GPU_FACTORY_VERSION ||
         Slice->SliceIndex != LaneIndex ||
         Slice->ArgumentBytes != ArgumentBytes ||
-        Slice->ObjectCount != PointerArgumentCount + 1 ||
-        Slice->ObjectLimit != PointerArgumentCount + 1 ||
-        Slice->RelationCount != PointerArgumentCount ||
-        Slice->RelationLimit != PointerArgumentCount ||
+        Slice->ObjectLimit !=
+            PointerArgumentCount + Factory->ConfigObjectsPerThread ||
+        Slice->RelationLimit != Slice->ObjectLimit - 1 || !Slice->ObjectCount ||
+        Slice->ObjectCount > Slice->ObjectLimit ||
+        Slice->RelationCount > Slice->RelationLimit ||
+        Slice->RelationCount + 1 != Slice->ObjectCount ||
         !rangeInSlice(Slice->ObjectTableOffset,
                       (uint64_t)Slice->ObjectLimit * sizeof(uint64_t),
                       Factory->SliceBytes) ||

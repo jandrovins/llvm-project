@@ -17,7 +17,7 @@
 
 #include <stdint.h>
 
-#define INPUTGEN_GPU_FACTORY_VERSION 2u
+#define INPUTGEN_GPU_FACTORY_VERSION 3u
 #define INPUTGEN_GPU_FACTORY_SLICE_MAGIC 0x4947534Cu
 #define INPUTGEN_GPU_FACTORY_OBJECT_MAGIC 0x49474F42u
 #define INPUTGEN_GPU_INPUT_MAGIC 0x494750554F424A31ULL
@@ -50,6 +50,9 @@ typedef struct InputGenGPUFactoryHeader {
   uint32_t NumTeams;
   uint32_t ThreadsPerTeam;
   uint32_t NumLanes;
+  // Additional per-GPU-thread object capacity, including object zero. The
+  // runtime adds the wrapper's pointer-argument count to derive ObjectLimit.
+  uint32_t ConfigObjectsPerThread;
   uint64_t SliceBytes;
   uint64_t ObjectBytes;
   uint64_t FactoryBytes;
@@ -112,6 +115,9 @@ typedef struct InputGenGPUInputFileHeader {
   uint32_t NumTeams;
   uint32_t NumThreads;
   uint32_t NumLanes;
+  uint32_t ConfigObjectsPerThread;
+  uint32_t ObjectLimit;
+  uint32_t RelationLimit;
   uint64_t SliceBytes;
   uint64_t ObjectBytes;
   uint64_t ResultStride;

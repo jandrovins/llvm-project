@@ -18,16 +18,16 @@ int main(void) {
   Header->Version = INPUTGEN_GPU_FACTORY_VERSION;
   Header->Mode = INPUTGEN_MODE_GENERATE;
   Header->NumTeams = Header->ThreadsPerTeam = Header->NumLanes = 1;
+  Header->ConfigObjectsPerThread = 1;
   Header->SliceBytes = 2048;
   Header->ObjectBytes = 64;
 
   void *Arguments = __ig_prepare_lane(Factory, 0, 0, 8, 1);
-  void *Slot = __ig_pre_load(Arguments, 0, 8, 8,
-                             INPUTGEN_GPU_VALUE_POINTER);
+  void *Slot = __ig_pre_load(Arguments, 0, 8, 8, INPUTGEN_GPU_VALUE_POINTER);
   void *Pointer = *(void **)Slot;
   void *OutOfBounds = (char *)Pointer + 64;
-  int *Fallback = (int *)__ig_pre_load(
-      OutOfBounds, 0, 4, 4, INPUTGEN_GPU_VALUE_INTEGER);
+  int *Fallback =
+      (int *)__ig_pre_load(OutOfBounds, 0, 4, 4, INPUTGEN_GPU_VALUE_INTEGER);
   InputGenGPUFactorySliceHeader *Slice =
       (InputGenGPUFactorySliceHeader *)(Factory + ((sizeof(*Header) + 7) &
                                                    ~((uint64_t)7)));
@@ -43,8 +43,8 @@ int main(void) {
   Header->Mode = INPUTGEN_MODE_GENERATE;
   (void)__ig_prepare_lane(Factory, 0, 0, 8, 1);
   int External = 7;
-  void *PassedThrough = __ig_pre_load(
-      &External, 0, 4, 4, INPUTGEN_GPU_VALUE_INTEGER);
+  void *PassedThrough =
+      __ig_pre_load(&External, 0, 4, 4, INPUTGEN_GPU_VALUE_INTEGER);
   printf("external-same=%d external-error=%u\n", PassedThrough == &External,
          Slice->Error);
   return 0;
