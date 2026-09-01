@@ -40,7 +40,6 @@ using namespace llvm;
 
 namespace {
 
-constexpr uint64_t DefaultSliceBytes = 16384;
 constexpr uint64_t DefaultObjectBytes = 1024;
 constexpr StringLiteral InputGenGPUEntryPointName = "__ig_entry";
 
@@ -104,11 +103,6 @@ cl::opt<uint32_t>
     NumThreadsOpt("num-threads",
                   cl::desc("Override the default one-thread launch geometry"),
                   cl::init(0), cl::cat(InputGenGPUCategory));
-cl::opt<uint64_t> FactoryBytesOpt(
-    "factory-bytes-per-thread",
-    cl::desc(
-        "Bytes reserved by the driver for each GPU thread's factory slice"),
-    cl::init(DefaultSliceBytes), cl::cat(InputGenGPUCategory));
 cl::opt<uint64_t> ObjectBytesOpt(
     "object-bytes",
     cl::desc("Fixed data capacity for each lazily allocated object"),
@@ -161,16 +155,14 @@ Expected<InputGenInvocation> parseInvocation() {
           : InputGenDataFilename.getValue(),
       DeviceIdOpt,
       {NumTeamsOpt > 0 ? NumTeamsOpt.getValue() : 1,
-       NumThreadsOpt > 0 ? NumThreadsOpt.getValue() : 1, FactoryBytesOpt,
-       ObjectBytesOpt, ObjectsPerThreadOpt},
+       NumThreadsOpt > 0 ? NumThreadsOpt.getValue() : 1, ObjectBytesOpt,
+       ObjectsPerThreadOpt},
       {},
   };
   if (NumTeamsOpt.getNumOccurrences())
     Invocation.ReplayRequest.NumTeams = NumTeamsOpt;
   if (NumThreadsOpt.getNumOccurrences())
     Invocation.ReplayRequest.NumThreads = NumThreadsOpt;
-  if (FactoryBytesOpt.getNumOccurrences())
-    Invocation.ReplayRequest.SliceBytes = FactoryBytesOpt;
   if (ObjectBytesOpt.getNumOccurrences())
     Invocation.ReplayRequest.ObjectBytes = ObjectBytesOpt;
   if (ObjectsPerThreadOpt.getNumOccurrences())
@@ -351,8 +343,7 @@ Error runInputGenGPU() {
 int main(int Argc, char **Argv) {
   cl::HideUnrelatedOptions(InputGenGPUCategory);
   cl::ParseCommandLineOptions(
-      Argc, Argv,
-      "Launch an InputGen GPU entry kernel from a device image\n");
+      Argc, Argv, "Launch an InputGen GPU entry kernel from a device image\n");
 
   if (Error Err = runInputGenGPU()) {
     WithColor::error(errs(), TOOL_NAME) << toString(std::move(Err)) << "\n";

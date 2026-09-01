@@ -24,7 +24,6 @@ enum class Mode : uint32_t { Generate = 1, Replay = 2 };
 struct FactoryConfig {
   uint32_t NumTeams = 1;
   uint32_t NumThreads = 1;
-  uint64_t SliceBytes = 0;
   uint64_t ObjectBytes = 0;
   uint32_t ObjectsPerThread = 4;
 };
@@ -34,7 +33,6 @@ struct FactoryConfig {
 struct ReplayRequest {
   std::optional<uint32_t> NumTeams;
   std::optional<uint32_t> NumThreads;
-  std::optional<uint64_t> SliceBytes;
   std::optional<uint64_t> ObjectBytes;
   std::optional<uint32_t> ObjectsPerThread;
 };
@@ -70,8 +68,7 @@ class Factory;
 Result<Factory> createGenerationFactory(const FactoryConfig &Config);
 Result<Factory> createReplayFactory(const std::string &Filename,
                                     const ReplayRequest &Request = {});
-Error writeGenerationRecord(const std::string &Filename,
-                            const Factory &Value);
+Error writeGenerationRecord(const std::string &Filename, const Factory &Value);
 
 class Factory {
 public:
@@ -87,16 +84,14 @@ public:
   size_t size() const { return Bytes.size(); }
 
 private:
-  Factory(Mode ExecutionMode, FactoryConfig Config,
-          std::vector<uint8_t> Bytes)
+  Factory(Mode ExecutionMode, FactoryConfig Config, std::vector<uint8_t> Bytes)
       : ExecutionMode(ExecutionMode), Config(Config), Bytes(std::move(Bytes)) {}
 
   Mode ExecutionMode;
   FactoryConfig Config;
   std::vector<uint8_t> Bytes;
 
-  friend Result<Factory>
-  createGenerationFactory(const FactoryConfig &Config);
+  friend Result<Factory> createGenerationFactory(const FactoryConfig &Config);
   friend Result<Factory> createReplayFactory(const std::string &Filename,
                                              const ReplayRequest &Request);
   friend Error writeGenerationRecord(const std::string &Filename,

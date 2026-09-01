@@ -20,7 +20,6 @@
 
 #define INPUTGEN_GPU_FACTORY_VERSION 4u
 #define INPUTGEN_GPU_FACTORY_SLICE_MAGIC 0x4947534Cu
-#define INPUTGEN_GPU_FACTORY_OBJECT_MAGIC 0x49474F42u
 #define INPUTGEN_GPU_INPUT_MAGIC 0x494750554F424A31ULL
 
 // Select whether callbacks fabricate input or require reconstructed input.
@@ -82,9 +81,7 @@ typedef struct InputGenGPUFactorySliceHeader {
   uint32_t Reserved;
   uint64_t ArgumentBytes;
   uint64_t ObjectBytes;
-  uint64_t ObjectTableOffset;
   uint64_t RelationTableOffset;
-  uint64_t NextOffset;
   uint64_t ResultBits;
   // Aligned fallback storage returned after a callback error so the rewritten
   // immediate access can complete and the launcher can report the error.
@@ -92,14 +89,6 @@ typedef struct InputGenGPUFactorySliceHeader {
   uint32_t ResultSize;
   uint32_t ResultReserved;
 } InputGenGPUFactorySliceHeader;
-
-// Prefixes an object record whose data, mask, and saved bytes follow in order.
-typedef struct InputGenGPUFactoryObjectHeader {
-  uint32_t Magic;
-  uint32_t ObjectIndex;
-  uint32_t Capacity;
-  uint32_t SliceOffset;
-} InputGenGPUFactoryObjectHeader;
 
 // Begins the sparse on-disk input record and fixes replay-compatible geometry.
 typedef struct InputGenGPUInputFileHeader {

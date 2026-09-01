@@ -32,7 +32,7 @@ int main(int Argc, char **Argv) {
   if (Argc != 3)
     return 1;
 
-  FactoryConfig Config{1, 1, 4096, 64, 2};
+  FactoryConfig Config{1, 1, 64, 2};
   auto GeneratedOrErr = createGenerationFactory(Config);
   if (!GeneratedOrErr)
     return fail(GeneratedOrErr);

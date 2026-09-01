@@ -9,6 +9,14 @@
 #include <stdint.h>
 #include <stdio.h>
 
+static uint64_t getSliceBytes(uint32_t Objects) {
+  uint64_t Relations =
+      (uint64_t)(Objects - 1) * sizeof(InputGenGPUFactoryPointerRelation);
+  uint64_t ObjectOffset =
+      (sizeof(InputGenGPUFactorySliceHeader) + 7 + Relations) & ~(uint64_t)7;
+  return ObjectOffset + (uint64_t)Objects * 3 * 64;
+}
+
 int main(void) {
   _Alignas(8) unsigned char Factory[4096] = {};
   InputGenGPUFactoryHeader *Header = (InputGenGPUFactoryHeader *)Factory;
@@ -19,7 +27,7 @@ int main(void) {
   Header->ThreadsPerTeam = 1;
   Header->NumLanes = 1;
   Header->ObjectsPerThread = 2;
-  Header->SliceBytes = 2048;
+  Header->SliceBytes = getSliceBytes(Header->ObjectsPerThread);
   Header->ObjectBytes = 64;
   Header->FactoryBytes = sizeof(Factory);
 
@@ -47,6 +55,7 @@ int main(void) {
 
   Header->Mode = INPUTGEN_MODE_GENERATE;
   Header->ObjectsPerThread = 3;
+  Header->SliceBytes = getSliceBytes(Header->ObjectsPerThread);
   Arguments = __ig_prepare_thread(Factory, 8);
   PointerSlot = __ig_pre_load(Arguments, 0, 8, 8, INPUTGEN_GPU_VALUE_POINTER);
   Pointer = *(void **)PointerSlot;
