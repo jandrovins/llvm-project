@@ -20,9 +20,6 @@
 namespace inputgen_gpu {
 namespace {
 
-constexpr uint64_t FactoryHeaderBytes =
-    (sizeof(InputGenGPUFactoryHeader) + 7) & ~uint64_t(7);
-
 struct InputRun {
   uint32_t Offset = 0;
   std::vector<uint8_t> Bytes;
@@ -64,51 +61,27 @@ template <typename T> Error readValue(FILE *File, T &Value) {
   return Error();
 }
 
-uint64_t alignTo(uint64_t Value, uint64_t Alignment) {
-  return (Value + Alignment - 1) & ~(Alignment - 1);
-}
-
-Result<uint32_t> getNumThreads(uint32_t NumTeams, uint32_t NumThreads) {
-  if (!NumTeams || !NumThreads ||
-      NumTeams > std::numeric_limits<uint32_t>::max() / NumThreads)
-    return Error("invalid launch geometry");
-  return NumTeams * NumThreads;
-}
-
-Result<uint64_t> getFactorySize(uint32_t NumThreads, uint64_t SliceBytes) {
-  if (!SliceBytes ||
-      NumThreads > (std::numeric_limits<uint64_t>::max() - FactoryHeaderBytes) /
-                       SliceBytes)
-    return Error("factory allocation size overflows");
-  return FactoryHeaderBytes + uint64_t(NumThreads) * SliceBytes;
-}
-
-Result<uint64_t> getSliceSize(uint64_t ObjectBytes, uint32_t ObjectsPerThread) {
-  if (!ObjectBytes || ObjectBytes > std::numeric_limits<uint32_t>::max() ||
-      ObjectBytes % 8)
+// Derive the factory layout, mapping the shared header's reason code to the
+// diagnostic the launcher prints.  Every offset this file uses comes from here;
+// see inputgen_gpu_factory.h for why it must not be recomputed locally.
+Result<InputGenGPUFactoryLayout> computeLayout(const FactoryConfig &Config) {
+  InputGenGPUFactoryLayout Layout;
+  switch (inputgenGPUComputeLayout(Config.NumTeams, Config.NumThreads,
+                                   Config.ObjectBytes, Config.ObjectsPerThread,
+                                   &Layout)) {
+  case INPUTGEN_GPU_LAYOUT_OK:
+    return Layout;
+  case INPUTGEN_GPU_LAYOUT_BAD_OBJECT_BYTES:
     return makeError("object bytes must be an 8-byte-aligned nonzero value no "
                      "greater than %u",
                      std::numeric_limits<uint32_t>::max());
-  if (!ObjectsPerThread)
+  case INPUTGEN_GPU_LAYOUT_BAD_OBJECT_COUNT:
     return Error("objects per GPU thread must be nonzero");
-  uint64_t RelationBytes = uint64_t(ObjectsPerThread - 1) *
-                           sizeof(InputGenGPUFactoryPointerRelation);
-  uint64_t ObjectOffset = alignTo(
-      alignTo(sizeof(InputGenGPUFactorySliceHeader), 8) + RelationBytes, 8);
-  uint64_t SlotBytes = 3 * ObjectBytes;
-  if (ObjectsPerThread >
-      (std::numeric_limits<uint64_t>::max() - ObjectOffset) / SlotBytes)
-    return Error("factory slice size overflows");
-  return ObjectOffset + uint64_t(ObjectsPerThread) * SlotBytes;
-}
-
-Error validateConfig(const FactoryConfig &Config) {
-  Result<uint32_t> Threads = getNumThreads(Config.NumTeams, Config.NumThreads);
-  if (!Threads)
-    return Threads.error();
-  Result<uint64_t> SliceBytes =
-      getSliceSize(Config.ObjectBytes, Config.ObjectsPerThread);
-  return SliceBytes ? Error() : SliceBytes.error();
+  case INPUTGEN_GPU_LAYOUT_OVERFLOW:
+    return Error("factory allocation size overflows");
+  default:
+    return Error("invalid launch geometry");
+  }
 }
 
 Error validateThreadLayout(const InputThread &Thread, uint64_t ArgumentBytes,
@@ -141,31 +114,27 @@ FactoryConfig configFromHeader(const InputGenGPUInputFileHeader &Header) {
 }
 
 void initializeFactoryHeader(std::vector<uint8_t> &Bytes,
-                             const FactoryConfig &Config, Mode ExecutionMode) {
+                             const FactoryConfig &Config,
+                             const InputGenGPUFactoryLayout &Layout,
+                             Mode ExecutionMode) {
   auto *Header = reinterpret_cast<InputGenGPUFactoryHeader *>(Bytes.data());
   Header->Magic = INPUTGEN_GPU_FACTORY_SLICE_MAGIC;
   Header->Version = INPUTGEN_GPU_FACTORY_VERSION;
   Header->Mode = static_cast<uint32_t>(ExecutionMode);
   Header->ThreadsPerTeam = Config.NumThreads;
-  Header->NumGPUThreads = Config.NumTeams * Config.NumThreads;
+  Header->NumGPUThreads = Layout.NumThreads;
   Header->ObjectsPerThread = Config.ObjectsPerThread;
   Header->ObjectBytes = Config.ObjectBytes;
 }
 
 } // namespace
 
-Result<Factory> createGenerationFactory(const FactoryConfig &RequestedConfig) {
-  FactoryConfig Config = RequestedConfig;
-  if (Error Failure = validateConfig(Config))
-    return Failure;
-  Result<uint32_t> Threads = getNumThreads(Config.NumTeams, Config.NumThreads);
-  Result<uint64_t> SliceBytes =
-      getSliceSize(Config.ObjectBytes, Config.ObjectsPerThread);
-  Result<uint64_t> Size = getFactorySize(Threads.value(), SliceBytes.value());
-  if (!Size)
-    return Size.error();
-  std::vector<uint8_t> Bytes(Size.value(), 0);
-  initializeFactoryHeader(Bytes, Config, Mode::Generate);
+Result<Factory> createGenerationFactory(const FactoryConfig &Config) {
+  Result<InputGenGPUFactoryLayout> Layout = computeLayout(Config);
+  if (!Layout)
+    return Layout.error();
+  std::vector<uint8_t> Bytes(Layout.value().TotalBytes, 0);
+  initializeFactoryHeader(Bytes, Config, Layout.value(), Mode::Generate);
   return Factory(Mode::Generate, Config, std::move(Bytes));
 }
 
@@ -223,15 +192,12 @@ Result<Record> readRecord(const std::string &Filename) {
   if (Storage.Header.Magic != INPUTGEN_GPU_INPUT_MAGIC ||
       Storage.Header.Version != INPUTGEN_GPU_FACTORY_VERSION)
     return makeError("unsupported InputGen data file '%s'", Filename.c_str());
-  Result<uint32_t> Threads =
-      getNumThreads(Storage.Header.NumTeams, Storage.Header.NumThreads);
-  Result<uint64_t> SliceBytes =
-      getSliceSize(Storage.Header.ObjectBytes, Storage.Header.ObjectsPerThread);
-  if (!Threads || !SliceBytes ||
-      Storage.Header.ArgumentBytes > Storage.Header.ObjectBytes)
+  Result<InputGenGPUFactoryLayout> Layout =
+      computeLayout(configFromHeader(Storage.Header));
+  if (!Layout || Storage.Header.ArgumentBytes > Storage.Header.ObjectBytes)
     return makeError("invalid InputGen data file '%s'", Filename.c_str());
 
-  Storage.Threads.resize(Threads.value());
+  Storage.Threads.resize(Layout.value().NumThreads);
   for (InputThread &Thread : Storage.Threads) {
     InputGenGPUInputFileThreadHeader ThreadHeader{};
     if (Error Failure = readValue(File.get(), ThreadHeader))
@@ -284,29 +250,21 @@ Result<Record> readRecord(const std::string &Filename) {
 
 Result<Record> serializeFactory(const Factory &Value) {
   const FactoryConfig &Config = Value.config();
-  if (Error Failure = validateConfig(Config))
-    return Failure;
-
-  Result<uint32_t> NumThreads =
-      getNumThreads(Config.NumTeams, Config.NumThreads);
-  if (!NumThreads)
-    return NumThreads.error();
-  Result<uint64_t> SliceBytes =
-      getSliceSize(Config.ObjectBytes, Config.ObjectsPerThread);
-  if (!SliceBytes)
-    return SliceBytes.error();
+  Result<InputGenGPUFactoryLayout> LayoutOrErr = computeLayout(Config);
+  if (!LayoutOrErr)
+    return LayoutOrErr.error();
+  const InputGenGPUFactoryLayout &Layout = LayoutOrErr.value();
   const uint8_t *Bytes = Value.data();
   Record Storage;
   Storage.Header = {
       INPUTGEN_GPU_INPUT_MAGIC,     Config.ObjectBytes, 0,
       INPUTGEN_GPU_FACTORY_VERSION, Config.NumTeams,    Config.NumThreads,
       Config.ObjectsPerThread};
-  Storage.Threads.resize(NumThreads.value());
+  Storage.Threads.resize(Layout.NumThreads);
 
-  for (uint32_t ThreadIndex = 0; ThreadIndex < NumThreads.value();
+  for (uint32_t ThreadIndex = 0; ThreadIndex < Layout.NumThreads;
        ++ThreadIndex) {
-    uint64_t SliceOffset =
-        FactoryHeaderBytes + uint64_t(ThreadIndex) * SliceBytes.value();
+    uint64_t SliceOffset = inputgenGPUSliceOffset(&Layout, ThreadIndex);
     if (SliceOffset + sizeof(InputGenGPUFactorySliceHeader) > Value.size())
       return Error("factory copy is truncated");
     auto *Slice = reinterpret_cast<const InputGenGPUFactorySliceHeader *>(
@@ -347,17 +305,11 @@ Result<Record> serializeFactory(const Factory &Value) {
 
     InputThread &Thread = Storage.Threads[ThreadIndex];
     Thread.Objects.reserve(Slice->ObjectCount);
-    uint64_t ObjectStorageOffset =
-        alignTo(alignTo(sizeof(*Slice), 8) +
-                    uint64_t(Config.ObjectsPerThread - 1) *
-                        sizeof(InputGenGPUFactoryPointerRelation),
-                8);
     for (uint32_t ObjectIndex = 0; ObjectIndex < Slice->ObjectCount;
          ++ObjectIndex) {
-      uint64_t ObjectOffset =
-          ObjectStorageOffset + uint64_t(ObjectIndex) * 3 * Config.ObjectBytes;
-      if (ObjectOffset > SliceBytes.value() ||
-          3 * Config.ObjectBytes > SliceBytes.value() - ObjectOffset)
+      uint64_t ObjectOffset = inputgenGPUObjectOffset(&Layout, ObjectIndex);
+      if (ObjectOffset > Layout.SliceBytes ||
+          Layout.ObjectSlotBytes > Layout.SliceBytes - ObjectOffset)
         return Error("invalid object capacity in device factory");
 
       const uint8_t *Data = Bytes + SliceOffset + ObjectOffset;
@@ -389,13 +341,12 @@ Result<Record> serializeFactory(const Factory &Value) {
 
     uint64_t RelationBytes = uint64_t(Slice->RelationCount) *
                              sizeof(InputGenGPUFactoryPointerRelation);
-    uint64_t RelationTableOffset = alignTo(sizeof(*Slice), 8);
-    if (RelationTableOffset > SliceBytes.value() ||
-        RelationBytes > SliceBytes.value() - RelationTableOffset)
+    if (Layout.RelationTableOffset > Layout.SliceBytes ||
+        RelationBytes > Layout.SliceBytes - Layout.RelationTableOffset)
       return Error("invalid pointer relationship table in device factory");
     auto *Relations =
         reinterpret_cast<const InputGenGPUFactoryPointerRelation *>(
-            Bytes + SliceOffset + RelationTableOffset);
+            Bytes + SliceOffset + Layout.RelationTableOffset);
     Thread.Relations.reserve(Slice->RelationCount);
     for (uint32_t I = 0; I < Slice->RelationCount; ++I)
       Thread.Relations.push_back(Relations[I]);
@@ -415,31 +366,21 @@ Result<Factory> createReplayFactory(const std::string &Filename) {
     return RecordOrErr.error();
   const Record &Storage = RecordOrErr.value();
   FactoryConfig Config = configFromHeader(Storage.Header);
-  if (Error Failure = validateConfig(Config))
-    return Failure;
-  Result<uint64_t> SliceBytes =
-      getSliceSize(Config.ObjectBytes, Config.ObjectsPerThread);
-  if (!SliceBytes)
-    return SliceBytes.error();
-  Result<uint32_t> NumThreads =
-      getNumThreads(Config.NumTeams, Config.NumThreads);
-  if (!NumThreads)
-    return NumThreads.error();
-  Result<uint64_t> Size =
-      getFactorySize(NumThreads.value(), SliceBytes.value());
-  if (!Size)
-    return Size.error();
-  std::vector<uint8_t> Bytes(Size.value(), 0);
+  Result<InputGenGPUFactoryLayout> LayoutOrErr = computeLayout(Config);
+  if (!LayoutOrErr)
+    return LayoutOrErr.error();
+  const InputGenGPUFactoryLayout &Layout = LayoutOrErr.value();
+  std::vector<uint8_t> Bytes(Layout.TotalBytes, 0);
 
-  for (uint32_t ThreadIndex = 0; ThreadIndex < NumThreads.value();
+  for (uint32_t ThreadIndex = 0; ThreadIndex < Layout.NumThreads;
        ++ThreadIndex) {
     const InputThread &Thread = Storage.Threads[ThreadIndex];
     if (Error Failure = validateThreadLayout(
             Thread, Storage.Header.ArgumentBytes, Storage.Header.ObjectBytes,
             Storage.Header.ObjectsPerThread))
       return Failure;
-    uint8_t *SliceStart = Bytes.data() + FactoryHeaderBytes +
-                          uint64_t(ThreadIndex) * SliceBytes.value();
+    uint8_t *SliceStart =
+        Bytes.data() + inputgenGPUSliceOffset(&Layout, ThreadIndex);
     auto *Slice = reinterpret_cast<InputGenGPUFactorySliceHeader *>(SliceStart);
     Slice->Magic = INPUTGEN_GPU_FACTORY_SLICE_MAGIC;
     Slice->Version = INPUTGEN_GPU_FACTORY_VERSION;
@@ -447,21 +388,14 @@ Result<Factory> createReplayFactory(const std::string &Filename) {
     Slice->ObjectCount = static_cast<uint32_t>(Thread.Objects.size());
     Slice->RelationCount = static_cast<uint32_t>(Thread.Relations.size());
     Slice->ArgumentBytes = Storage.Header.ArgumentBytes;
-    uint64_t RelationTableOffset = alignTo(sizeof(*Slice), 8);
-    uint64_t ObjectStorageOffset = alignTo(
-        RelationTableOffset + uint64_t(Storage.Header.ObjectsPerThread - 1) *
-                                  sizeof(InputGenGPUFactoryPointerRelation),
-        8);
     for (uint32_t ObjectIndex = 0; ObjectIndex < Thread.Objects.size();
          ++ObjectIndex) {
       const InputObject &SerializedObject = Thread.Objects[ObjectIndex];
       uint64_t Capacity = ObjectIndex == 0 ? Storage.Header.ArgumentBytes
                                            : Storage.Header.ObjectBytes;
-      uint64_t ObjectOffset =
-          ObjectStorageOffset +
-          uint64_t(ObjectIndex) * 3 * Storage.Header.ObjectBytes;
-      if (ObjectOffset > SliceBytes.value() ||
-          3 * Storage.Header.ObjectBytes > SliceBytes.value() - ObjectOffset)
+      uint64_t ObjectOffset = inputgenGPUObjectOffset(&Layout, ObjectIndex);
+      if (ObjectOffset > Layout.SliceBytes ||
+          Layout.ObjectSlotBytes > Layout.SliceBytes - ObjectOffset)
         return Error("InputGen replay object does not fit in its slice");
       uint8_t *Data = SliceStart + ObjectOffset;
       uint8_t *Mask = Data + Storage.Header.ObjectBytes;
@@ -474,12 +408,12 @@ Result<Factory> createReplayFactory(const std::string &Filename) {
       }
     }
     auto *Relations = reinterpret_cast<InputGenGPUFactoryPointerRelation *>(
-        SliceStart + RelationTableOffset);
+        SliceStart + Layout.RelationTableOffset);
     for (uint32_t I = 0; I < Thread.Relations.size(); ++I)
       Relations[I] = Thread.Relations[I];
   }
 
-  initializeFactoryHeader(Bytes, Config, Mode::Replay);
+  initializeFactoryHeader(Bytes, Config, Layout, Mode::Replay);
   return Factory(Mode::Replay, Config, std::move(Bytes));
 }
 
@@ -494,28 +428,20 @@ Error writeGenerationRecord(const std::string &Filename, const Factory &Value) {
 
 Result<std::vector<ThreadResult>> inspectThreadResults(const Factory &Value) {
   const FactoryConfig &Config = Value.config();
-  Result<uint32_t> NumThreads =
-      getNumThreads(Config.NumTeams, Config.NumThreads);
-  if (!NumThreads)
-    return NumThreads.error();
-  const uint8_t *Bytes = Value.data();
-  Result<uint64_t> SliceBytes =
-      getSliceSize(Config.ObjectBytes, Config.ObjectsPerThread);
-  if (!SliceBytes)
-    return SliceBytes.error();
-  Result<uint64_t> ExpectedSize =
-      getFactorySize(NumThreads.value(), SliceBytes.value());
-  if (!ExpectedSize || ExpectedSize.value() != Value.size())
+  Result<InputGenGPUFactoryLayout> LayoutOrErr = computeLayout(Config);
+  if (!LayoutOrErr)
+    return LayoutOrErr.error();
+  const InputGenGPUFactoryLayout &Layout = LayoutOrErr.value();
+  if (Layout.TotalBytes != Value.size())
     return Error("factory copy has an invalid size");
 
+  const uint8_t *Bytes = Value.data();
   std::vector<ThreadResult> Results;
-  Results.reserve(NumThreads.value());
-  for (uint32_t ThreadIndex = 0; ThreadIndex < NumThreads.value();
+  Results.reserve(Layout.NumThreads);
+  for (uint32_t ThreadIndex = 0; ThreadIndex < Layout.NumThreads;
        ++ThreadIndex) {
-    uint64_t Offset =
-        FactoryHeaderBytes + uint64_t(ThreadIndex) * SliceBytes.value();
-    auto *Slice =
-        reinterpret_cast<const InputGenGPUFactorySliceHeader *>(Bytes + Offset);
+    auto *Slice = reinterpret_cast<const InputGenGPUFactorySliceHeader *>(
+        Bytes + inputgenGPUSliceOffset(&Layout, ThreadIndex));
     if (Slice->Magic != INPUTGEN_GPU_FACTORY_SLICE_MAGIC ||
         Slice->Version != INPUTGEN_GPU_FACTORY_VERSION ||
         Slice->SliceIndex != ThreadIndex)
