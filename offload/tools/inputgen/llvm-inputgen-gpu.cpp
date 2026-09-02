@@ -124,11 +124,6 @@ Error convertError(const inputgen_gpu::Error &Failure) {
   return createErr("%s", Failure.message().c_str());
 }
 
-template <typename T>
-Error convertResultError(const inputgen_gpu::Result<T> &Failure) {
-  return convertError(Failure.error());
-}
-
 std::string getDefaultInputGenDataFilename(StringRef ImagePath) {
   SmallString<256> Path(ImagePath);
   sys::path::replace_extension(Path, "inputgen");
@@ -256,7 +251,7 @@ Error reportResults(const InputGenInvocation &Invocation,
                     const inputgen_gpu::Factory &Factory) {
   auto Results = inputgen_gpu::inspectThreadResults(Factory);
   if (!Results)
-    return convertResultError(Results);
+    return convertError(Results.error());
   for (const inputgen_gpu::ThreadResult &Result : Results.value()) {
     if (Result.ErrorCode)
       return createErr(
@@ -285,7 +280,7 @@ Error runInputGenGPU() {
   };
   inputgen_gpu::Result<inputgen_gpu::Factory> FactoryOrErr = CreateFactory();
   if (!FactoryOrErr)
-    return convertResultError(FactoryOrErr);
+    return convertError(FactoryOrErr.error());
   inputgen_gpu::Factory HostFactory = std::move(FactoryOrErr).value();
   Invocation.FactoryConfig = HostFactory.config();
 

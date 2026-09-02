@@ -82,8 +82,15 @@ bool isSupportedScalarType(Type *Ty, const DataLayout &DL) {
   }
 }
 
-// Keep the device callback ABI independent of llvm::Type::TypeID.  The
-// callbacks only support this small, deliberate type set.
+// Keep the device callback ABI independent of llvm::Type::TypeID, whose values
+// are an LLVM implementation detail.  These literals must stay equal to the
+// INPUTGEN_GPU_VALUE_* enumerators in compiler-rt's
+// lib/inputgen_gpu/inputgen_gpu_instrumentor_abi.h: integer 1, float 2,
+// double 3, pointer 4.  LLVM cannot include a compiler-rt header, so nothing
+// enforces that at compile time; a divergence shows up as a device
+// INPUTGEN_GPU_FACTORY_ERROR_TYPE in the end-to-end
+// offload/test/tools/inputgen-gpu tests.  The callbacks support only this
+// small, deliberate type set.
 uint32_t getInputGenGPUValueKind(Type *Ty) {
   if (Ty->isIntegerTy())
     return 1;
