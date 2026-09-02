@@ -80,6 +80,109 @@ typedef struct InputGenGPUFactorySliceHeader {
   uint32_t ResultSize;
 } InputGenGPUFactorySliceHeader;
 
+// Reports why a requested geometry has no valid layout.  The device runtime
+// only distinguishes OK from not-OK; the host codec maps each code to a
+// user-visible launcher diagnostic.
+enum {
+  INPUTGEN_GPU_LAYOUT_OK = 0,
+  INPUTGEN_GPU_LAYOUT_BAD_GEOMETRY = 1,
+  INPUTGEN_GPU_LAYOUT_BAD_OBJECT_BYTES = 2,
+  INPUTGEN_GPU_LAYOUT_BAD_OBJECT_COUNT = 3,
+  INPUTGEN_GPU_LAYOUT_OVERFLOW = 4,
+};
+
+// The single definition of the factory's byte layout.  The host codec writes
+// the buffer and the device runtime reads it, so both must derive every offset
+// from this struct; neither may compute one independently.  A slice is
+//
+//   slice header | relation table | object 0 | object 1 | ...
+//
+// and each object slot is three equal-sized regions: data | mask | saved.
+typedef struct InputGenGPUFactoryLayout {
+  // NumTeams * NumThreads: one slice exists per GPU thread.
+  uint32_t NumThreads;
+  // Data capacity of a single object, from the factory header.
+  uint64_t ObjectBytes;
+  // Total object slots per slice, including argument object zero.
+  uint32_t ObjectsPerThread;
+  // Slice-relative start of the InputGenGPUFactoryPointerRelation table.
+  uint64_t RelationTableOffset;
+  // Slice-relative start of the first object slot.
+  uint64_t ObjectStorageOffset;
+  // Bytes per object slot: 3 * ObjectBytes for data, mask, and saved.
+  uint64_t ObjectSlotBytes;
+  // Distance between consecutive slices, and the size of one slice.
+  uint64_t SliceBytes;
+  // Whole factory allocation: aligned factory header + NumThreads slices.
+  uint64_t TotalBytes;
+} InputGenGPUFactoryLayout;
+
+static inline uint64_t inputgenGPUAlignTo(uint64_t Value, uint64_t Alignment) {
+  return (Value + Alignment - 1) & ~(Alignment - 1);
+}
+
+// Derives the layout for one geometry.  Returns INPUTGEN_GPU_LAYOUT_OK and
+// fills *Layout, or a reason code and leaves *Layout unmodified.
+static inline int inputgenGPUComputeLayout(uint32_t NumTeams,
+                                           uint32_t NumThreads,
+                                           uint64_t ObjectBytes,
+                                           uint32_t ObjectsPerThread,
+                                           InputGenGPUFactoryLayout *Layout) {
+  if (!NumTeams || !NumThreads || NumTeams > UINT32_MAX / NumThreads)
+    return INPUTGEN_GPU_LAYOUT_BAD_GEOMETRY;
+  if (!ObjectBytes || ObjectBytes > UINT32_MAX || (ObjectBytes & 7))
+    return INPUTGEN_GPU_LAYOUT_BAD_OBJECT_BYTES;
+  if (!ObjectsPerThread)
+    return INPUTGEN_GPU_LAYOUT_BAD_OBJECT_COUNT;
+
+  uint64_t RelationTableOffset =
+      inputgenGPUAlignTo(sizeof(InputGenGPUFactorySliceHeader), 8);
+  uint64_t RelationBytes = (uint64_t)(ObjectsPerThread - 1) *
+                           sizeof(InputGenGPUFactoryPointerRelation);
+  uint64_t ObjectStorageOffset =
+      inputgenGPUAlignTo(RelationTableOffset + RelationBytes, 8);
+  uint64_t ObjectSlotBytes = 3 * ObjectBytes;
+  if ((uint64_t)ObjectsPerThread >
+      (UINT64_MAX - ObjectStorageOffset) / ObjectSlotBytes)
+    return INPUTGEN_GPU_LAYOUT_OVERFLOW;
+  uint64_t SliceBytes =
+      ObjectStorageOffset + (uint64_t)ObjectsPerThread * ObjectSlotBytes;
+
+  uint64_t FactoryHeaderBytes =
+      inputgenGPUAlignTo(sizeof(InputGenGPUFactoryHeader), 8);
+  uint32_t TotalThreads = NumTeams * NumThreads;
+  if ((uint64_t)TotalThreads > (UINT64_MAX - FactoryHeaderBytes) / SliceBytes)
+    return INPUTGEN_GPU_LAYOUT_OVERFLOW;
+
+  Layout->NumThreads = TotalThreads;
+  Layout->ObjectBytes = ObjectBytes;
+  Layout->ObjectsPerThread = ObjectsPerThread;
+  Layout->RelationTableOffset = RelationTableOffset;
+  Layout->ObjectStorageOffset = ObjectStorageOffset;
+  Layout->ObjectSlotBytes = ObjectSlotBytes;
+  Layout->SliceBytes = SliceBytes;
+  Layout->TotalBytes =
+      FactoryHeaderBytes + (uint64_t)TotalThreads * SliceBytes;
+  return INPUTGEN_GPU_LAYOUT_OK;
+}
+
+// Factory-relative offset of one GPU thread's slice.
+static inline uint64_t
+inputgenGPUSliceOffset(const InputGenGPUFactoryLayout *Layout,
+                       uint32_t ThreadIndex) {
+  return inputgenGPUAlignTo(sizeof(InputGenGPUFactoryHeader), 8) +
+         (uint64_t)ThreadIndex * Layout->SliceBytes;
+}
+
+// Slice-relative offset of one object slot's data region.  The mask region
+// follows at + ObjectBytes and the saved region at + 2 * ObjectBytes.
+static inline uint64_t
+inputgenGPUObjectOffset(const InputGenGPUFactoryLayout *Layout,
+                        uint32_t ObjectIndex) {
+  return Layout->ObjectStorageOffset +
+         (uint64_t)ObjectIndex * Layout->ObjectSlotBytes;
+}
+
 // Begins the sparse on-disk input record and fixes replay-compatible geometry.
 typedef struct InputGenGPUInputFileHeader {
   uint64_t Magic;
