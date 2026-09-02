@@ -198,15 +198,18 @@ static char *findObject(const SliceContext *Ctx, void *Pointer,
   if (PointerAS != 0)
     return 0;
 
+  // Every object slot lies within this thread's slice, so an address outside
+  // the slice cannot match one below. Leaving here keeps an ordinary access to
+  // non-factory memory off the object scan entirely.
   uintptr_t Address = (uintptr_t)Pointer;
   uintptr_t SliceBegin = (uintptr_t)Slice;
-  if (Address >= SliceBegin && Address - SliceBegin < Ctx->Layout.SliceBytes)
-    *IsFactoryAddress = 1;
+  if (Address < SliceBegin || Address - SliceBegin >= Ctx->Layout.SliceBytes)
+    return 0;
+  *IsFactoryAddress = 1;
 
   if (Size <= 0 || Size > 8 || Alignment <= 0 ||
       ((uint64_t)Alignment & ((uint64_t)Alignment - 1)) != 0) {
-    if (*IsFactoryAddress)
-      setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_ACCESS);
+    setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_ACCESS);
     return 0;
   }
 
@@ -225,14 +228,14 @@ static char *findObject(const SliceContext *Ctx, void *Pointer,
       setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_ACCESS);
       return 0;
     }
-    *IsFactoryAddress = 1;
     *ObjectIndex = Index;
     *OffsetOut = (uint32_t)Offset;
     return Data;
   }
 
-  if (*IsFactoryAddress)
-    setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_ACCESS);
+  // In the slice but not in any object's data range: the slice header, a
+  // table, an unallocated slot, or an object's mask or saved region.
+  setError(Slice, INPUTGEN_GPU_FACTORY_ERROR_ACCESS);
   return 0;
 }
 
