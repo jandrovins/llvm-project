@@ -2,7 +2,6 @@
 // GENERATE: serialized input =
 // GENERATE: result[0] = 81
 // REPLAY: replay result[0] = 81
-// CAPACITY-CONFLICT: error: replay options conflict with the InputGen data file
 // OUTPUT-ERROR: error: failed to open generated data file
 
 struct Inputs {

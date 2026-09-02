@@ -11,7 +11,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -26,15 +25,6 @@ struct FactoryConfig {
   uint32_t NumThreads = 1;
   uint64_t ObjectBytes = 0;
   uint32_t ObjectsPerThread = 4;
-};
-
-// A present field means that the user explicitly requested that replay value.
-// Replay rejects it when it differs from the value stored in the input record.
-struct ReplayRequest {
-  std::optional<uint32_t> NumTeams;
-  std::optional<uint32_t> NumThreads;
-  std::optional<uint64_t> ObjectBytes;
-  std::optional<uint32_t> ObjectsPerThread;
 };
 
 class Error {
@@ -66,8 +56,7 @@ private:
 
 class Factory;
 Result<Factory> createGenerationFactory(const FactoryConfig &Config);
-Result<Factory> createReplayFactory(const std::string &Filename,
-                                    const ReplayRequest &Request = {});
+Result<Factory> createReplayFactory(const std::string &Filename);
 Error writeGenerationRecord(const std::string &Filename, const Factory &Value);
 
 class Factory {
@@ -92,8 +81,7 @@ private:
   std::vector<uint8_t> Bytes;
 
   friend Result<Factory> createGenerationFactory(const FactoryConfig &Config);
-  friend Result<Factory> createReplayFactory(const std::string &Filename,
-                                             const ReplayRequest &Request);
+  friend Result<Factory> createReplayFactory(const std::string &Filename);
   friend Error writeGenerationRecord(const std::string &Filename,
                                      const Factory &Value);
 };

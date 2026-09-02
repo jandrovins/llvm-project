@@ -48,7 +48,6 @@ struct InputGenInvocation {
   std::string DataFilename;
   int32_t DeviceId;
   inputgen_gpu::FactoryConfig FactoryConfig;
-  inputgen_gpu::ReplayRequest ReplayRequest;
 };
 
 // Owns the launcher-allocated device factory and releases it on destruction.
@@ -96,20 +95,23 @@ cl::opt<int32_t> DeviceIdOpt("device-id", cl::desc("Select the target device"),
                              cl::init(0), cl::cat(InputGenGPUCategory));
 cl::opt<uint32_t>
     NumTeamsOpt("num-teams",
-                cl::desc("Override the default one-team launch geometry"),
+                cl::desc("Set generation launch geometry (replay uses the "
+                         "recorded geometry)"),
                 cl::init(0), cl::cat(InputGenGPUCategory));
 cl::opt<uint32_t>
     NumThreadsOpt("num-threads",
-                  cl::desc("Override the default one-thread launch geometry"),
+                  cl::desc("Set generation launch geometry (replay uses the "
+                           "recorded geometry)"),
                   cl::init(0), cl::cat(InputGenGPUCategory));
 cl::opt<uint64_t> ObjectBytesOpt(
     "object-bytes",
-    cl::desc("Fixed data capacity for each lazily allocated object"),
+    cl::desc("Set generation capacity for each lazily allocated object "
+             "(replay uses the recorded capacity)"),
     cl::init(DefaultObjectBytes), cl::cat(InputGenGPUCategory));
 cl::opt<uint32_t> ObjectsPerThreadOpt(
     "objects-per-thread",
     cl::desc("Total object capacity per GPU thread, including the argument "
-             "object"),
+             "object, when generating (replay uses the recorded capacity)"),
     cl::init(4), cl::cat(InputGenGPUCategory));
 
 template <typename... ArgsTy>
@@ -156,16 +158,7 @@ Expected<InputGenInvocation> parseInvocation() {
       {NumTeamsOpt > 0 ? NumTeamsOpt.getValue() : 1,
        NumThreadsOpt > 0 ? NumThreadsOpt.getValue() : 1, ObjectBytesOpt,
        ObjectsPerThreadOpt},
-      {},
   };
-  if (NumTeamsOpt.getNumOccurrences())
-    Invocation.ReplayRequest.NumTeams = NumTeamsOpt;
-  if (NumThreadsOpt.getNumOccurrences())
-    Invocation.ReplayRequest.NumThreads = NumThreadsOpt;
-  if (ObjectBytesOpt.getNumOccurrences())
-    Invocation.ReplayRequest.ObjectBytes = ObjectBytesOpt;
-  if (ObjectsPerThreadOpt.getNumOccurrences())
-    Invocation.ReplayRequest.ObjectsPerThread = ObjectsPerThreadOpt;
   return Invocation;
 }
 
@@ -288,8 +281,7 @@ Error runInputGenGPU() {
   auto CreateFactory = [&]() -> inputgen_gpu::Result<inputgen_gpu::Factory> {
     if (Invocation.Mode == inputgen_gpu::Mode::Generate)
       return inputgen_gpu::createGenerationFactory(Invocation.FactoryConfig);
-    return inputgen_gpu::createReplayFactory(Invocation.DataFilename,
-                                             Invocation.ReplayRequest);
+    return inputgen_gpu::createReplayFactory(Invocation.DataFilename);
   };
   inputgen_gpu::Result<inputgen_gpu::Factory> FactoryOrErr = CreateFactory();
   if (!FactoryOrErr)

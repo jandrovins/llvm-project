@@ -409,21 +409,11 @@ Result<Record> serializeFactory(const Factory &Value) {
 
 } // namespace
 
-Result<Factory> createReplayFactory(const std::string &Filename,
-                                    const ReplayRequest &Request) {
+Result<Factory> createReplayFactory(const std::string &Filename) {
   Result<Record> RecordOrErr = readRecord(Filename);
   if (!RecordOrErr)
     return RecordOrErr.error();
   const Record &Storage = RecordOrErr.value();
-  if ((Request.NumTeams && *Request.NumTeams != Storage.Header.NumTeams) ||
-      (Request.NumThreads &&
-       *Request.NumThreads != Storage.Header.NumThreads) ||
-      (Request.ObjectBytes &&
-       *Request.ObjectBytes != Storage.Header.ObjectBytes) ||
-      (Request.ObjectsPerThread &&
-       *Request.ObjectsPerThread != Storage.Header.ObjectsPerThread))
-    return Error("replay options conflict with the InputGen data file");
-
   FactoryConfig Config = configFromHeader(Storage.Header);
   if (Error Failure = validateConfig(Config))
     return Failure;

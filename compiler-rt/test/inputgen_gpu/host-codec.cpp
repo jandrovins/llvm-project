@@ -66,11 +66,6 @@ int main(int Argc, char **Argv) {
                   PointerBytes + sizeof(OldPointer)) != FileBytes.end();
   std::printf("serialized-old-pointer=%d\n", ContainsPointer);
 
-  ReplayRequest Conflict;
-  Conflict.NumTeams = 2;
-  auto ConflictOrErr = createReplayFactory(Argv[1], Conflict);
-  std::printf("conflict=%d\n", !ConflictOrErr);
-
   auto ReplayOrErr = createReplayFactory(Argv[1]);
   if (!ReplayOrErr)
     return fail(ReplayOrErr);
@@ -97,7 +92,6 @@ int main(int Argc, char **Argv) {
 // CHECK: generated=9
 // CHECK: result=81 error=0
 // CHECK: serialized-old-pointer=0
-// CHECK: conflict=1
 // CHECK: replay=9 relocated=1
 // CHECK: malformed=1
 // CHECK: output-error=1
