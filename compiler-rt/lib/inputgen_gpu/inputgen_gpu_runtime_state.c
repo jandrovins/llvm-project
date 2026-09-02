@@ -21,24 +21,17 @@ static InputGenGPUFactoryHeader *currentFactory(void) {
   return (InputGenGPUFactoryHeader *)(uintptr_t)FactoryContextBits;
 }
 
-static int factoryLayout(const InputGenGPUFactoryHeader *Factory,
-                         InputGenGPUFactoryLayout *Layout) {
-  // The header stores the already-multiplied thread count, so pass it as the
-  // team count against a single thread per team; the product is what the
-  // layout needs. ThreadsPerTeam is validated separately, by resolveContext,
-  // because only the hardware-ID mapping depends on it.
-  return inputgenGPUComputeLayout(Factory->NumGPUThreads, 1,
-                                  Factory->ObjectBytes,
-                                  Factory->ObjectsPerThread,
-                                  Layout) == INPUTGEN_GPU_LAYOUT_OK;
-}
-
 // Resolve the factory, its layout, and this GPU thread's slice. Returns 0 and
 // leaves *Ctx unusable when the geometry or the hardware IDs do not match.
 static int resolveContext(InputGenGPUFactoryHeader *Factory, SliceContext *Ctx,
                           uint64_t *ThreadIndex) {
+  // The header stores the already-multiplied thread count, so pass it as the
+  // team count against a single thread per team; only the product matters to
+  // the layout. ThreadsPerTeam is checked here instead, because just the
+  // hardware-ID mapping below depends on it.
   if (!Factory || !Factory->ThreadsPerTeam ||
-      !factoryLayout(Factory, &Ctx->Layout))
+      !inputgenGPUComputeLayout(Factory->NumGPUThreads, 1, Factory->ObjectBytes,
+                                Factory->ObjectsPerThread, &Ctx->Layout))
     return 0;
 #if defined(__AMDGCN__)
   uint64_t WorkgroupIndex = __builtin_amdgcn_workgroup_id_x();

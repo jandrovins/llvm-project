@@ -13,7 +13,6 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
-#include <limits>
 #include <memory>
 #include <utility>
 
@@ -61,27 +60,15 @@ template <typename T> Error readValue(FILE *File, T &Value) {
   return Error();
 }
 
-// Derive the factory layout, mapping the shared header's reason code to the
-// diagnostic the launcher prints.  Every offset this file uses comes from here;
-// see inputgen_gpu_factory.h for why it must not be recomputed locally.
+// Derive the factory layout.  Every offset this file uses comes from here; see
+// inputgen_gpu_factory.h for why it must not be recomputed locally.
 Result<InputGenGPUFactoryLayout> computeLayout(const FactoryConfig &Config) {
   InputGenGPUFactoryLayout Layout;
-  switch (inputgenGPUComputeLayout(Config.NumTeams, Config.NumThreads,
-                                   Config.ObjectBytes, Config.ObjectsPerThread,
-                                   &Layout)) {
-  case INPUTGEN_GPU_LAYOUT_OK:
-    return Layout;
-  case INPUTGEN_GPU_LAYOUT_BAD_OBJECT_BYTES:
-    return makeError("object bytes must be an 8-byte-aligned nonzero value no "
-                     "greater than %u",
-                     std::numeric_limits<uint32_t>::max());
-  case INPUTGEN_GPU_LAYOUT_BAD_OBJECT_COUNT:
-    return Error("objects per GPU thread must be nonzero");
-  case INPUTGEN_GPU_LAYOUT_OVERFLOW:
-    return Error("factory allocation size overflows");
-  default:
-    return Error("invalid launch geometry");
-  }
+  if (!inputgenGPUComputeLayout(Config.NumTeams, Config.NumThreads,
+                                Config.ObjectBytes, Config.ObjectsPerThread,
+                                &Layout))
+    return Error("invalid InputGen factory layout");
+  return Layout;
 }
 
 Error validateThreadLayout(const InputThread &Thread, uint64_t ArgumentBytes,
