@@ -14,6 +14,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/AttributeMask.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constants.h"
@@ -169,6 +170,60 @@ bool collectInstrumentedFunctions(Function *EntryFn,
     }
   }
   return true;
+}
+
+// Discard the attributes instrumentation invalidates.
+//
+// An instrumented function gains calls into the InputGen runtime, which reads
+// and writes memory no argument of that function can reach: the launch-wide
+// factory context, the slice header and its relation table, and the mask and
+// saved regions beside each object's data.  It also writes through pointers the
+// original body only read, because a pre-load fabricates the value it is about
+// to hand back.
+//
+// Attributes the frontend inferred from the uninstrumented body no longer
+// describe it.  Left in place they are not merely stale, they are false, and an
+// optimizer entitled to believe them may reorder, hoist, or delete the very
+// accesses this pass exists to observe.  Drop them before anything downstream
+// reads them.  Removing an attribute is always conservative; the cost is
+// optimization quality inside a function that is being instrumented anyway.
+void dropInvalidatedAttributes(Function &Fn) {
+  // Remove the memory effects rather than widening them to readwrite: the two
+  // mean the same thing, but an absent attribute cannot go stale again.
+  Fn.removeFnAttr(Attribute::Memory);
+  Fn.removeFnAttr(Attribute::NoSync);
+
+  AttributeMask InvalidatedPointerAttrs;
+  InvalidatedPointerAttrs.addAttribute(Attribute::ReadOnly);
+  InvalidatedPointerAttrs.addAttribute(Attribute::WriteOnly);
+  InvalidatedPointerAttrs.addAttribute(Attribute::ReadNone);
+  InvalidatedPointerAttrs.addAttribute(Attribute::NoAlias);
+  InvalidatedPointerAttrs.addAttribute(Attribute::Captures);
+  for (Argument &Arg : Fn.args())
+    if (Arg.getType()->isPointerTy())
+      Fn.removeParamAttrs(Arg.getArgNo(), InvalidatedPointerAttrs);
+
+  // The "amdgpu-no-*" attributes each assert that the function needs none of
+  // some implicit kernel input.  The device runtime reads the hardware
+  // workgroup and workitem IDs to locate this thread's slice, so an
+  // instrumented function needs inputs its uninstrumented body did not.
+  //
+  // These must be removed rather than left to be recomputed.  AMDGPUAttributor
+  // seeds an existing attribute as a known fact instead of re-deriving it, so a
+  // stale one is believed: the caller never passes the implicit inputs, the
+  // runtime reads a garbage thread index, and resolving the slice fails.  Every
+  // callback then returns its pointer untouched, which is silent -- the program
+  // reads zeroed factory memory, no input is recorded, and no error is set.
+  //
+  // Drop all of them rather than the two the runtime happens to read today;
+  // this pass cannot know what the runtime it links will need, and asserting
+  // that a function needs nothing is the only unsafe answer.
+  SmallVector<StringRef> StaleTargetAttrs;
+  for (const Attribute &A : Fn.getAttributes().getFnAttrs())
+    if (A.isStringAttribute() && A.getKindAsString().starts_with("amdgpu-no-"))
+      StaleTargetAttrs.push_back(A.getKindAsString());
+  for (StringRef Kind : StaleTargetAttrs)
+    Fn.removeFnAttr(Kind);
 }
 
 // Build the GPU wrapper that gives every lane a factory slice, loads scalar
@@ -490,6 +545,11 @@ PreservedAnalyses InputGenGPUPass::run(Module &M, ModuleAnalysisManager &MAM) {
   EntryKernelInfo Info;
   if (!createInputGenGPUEntryKernel(M, IIRB, InputGenGPUEntryFunction, Info))
     return PreservedAnalyses::all();
+
+  // Do this before the Instrumentor runs so no consumer, in this pipeline or a
+  // later one, ever sees a function whose attributes contradict its body.
+  for (Function *Fn : Info.InstrumentedFunctions)
+    dropInvalidatedAttributes(*Fn);
 
   InputGenGPUConfig IConf(Info);
   (void)InstrumentorPass(/*FS=*/nullptr, &IConf, &IIRB).run(M, MAM);
